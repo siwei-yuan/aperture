@@ -87,7 +87,7 @@ export function buildState(deps: UiDeps): UiState {
     .all() as Array<{ platform: string; external_id: string; person_id: string }>;
   const personIds = new Set<string>([ownerId]);
   for (const a of aliasRows) personIds.add(a.person_id);
-  for (const t of tiers) for (const m of t.members) if (m.startsWith('person:')) personIds.add(m);
+  for (const t of tuples) if (t.subject.startsWith('person:')) personIds.add(t.subject);
   const people: PersonInfo[] = [...personIds].sort().map((personId) => ({
     personId,
     aliases: aliasRows
@@ -296,6 +296,51 @@ export function viewerReport(deps: UiDeps, viewer: string): ViewerReport {
     knownAtoms,
     timeline,
   };
+}
+
+function topicNames(deps: UiDeps): string[] {
+  const names = new Set<string>();
+  for (const atom of deps.store.listRetrievable()) for (const t of atom.topics) names.add(t);
+  for (const t of tupleRows(deps.db)) if (t.object.startsWith('topic:')) names.add(t.object.slice('topic:'.length));
+  return [...names].sort();
+}
+
+/** Audit mode: one person's effective resolution on every topic — check() verbatim. */
+export function effectiveRow(deps: UiDeps, person: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const topic of topicNames(deps)) out[topic] = check(deps.db, person, `topic:${topic}`);
+  return out;
+}
+
+class Rollback extends Error {}
+
+/**
+ * The confirmation card's per-topic diff for a hypothetical tier move.
+ * The move is applied projection-only inside a transaction that always
+ * rolls back — no ledger event, no observable state change; the numbers
+ * come from the real evaluator against the hypothetical tuple set.
+ */
+export function movePreview(
+  deps: UiDeps,
+  person: string,
+  from: string | null,
+  to: string,
+): Array<{ topic: string; before: number; after: number }> {
+  const topics = topicNames(deps);
+  const before = topics.map((t) => check(deps.db, person, `topic:${t}`));
+  let after: number[] = [];
+  const tx = deps.db.transaction(() => {
+    if (from) deps.acl.applyRevoke({ object: `tier:${from}`, relation: 'member', subject: person });
+    deps.acl.applyGrant({ object: `tier:${to}`, relation: 'member', subject: person, resolution: 4 });
+    after = topics.map((t) => check(deps.db, person, `topic:${t}`));
+    throw new Rollback();
+  });
+  try {
+    tx();
+  } catch (err) {
+    if (!(err instanceof Rollback)) throw err;
+  }
+  return topics.map((topic, i) => ({ topic, before: before[i]!, after: after[i]! }));
 }
 
 /**

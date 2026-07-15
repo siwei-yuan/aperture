@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { promoteAtom, sealAtom } from '../core/ingest.js';
-import { buildState, headSeq, tierMove, viewerReport, type UiDeps } from './api.js';
+import { buildState, effectiveRow, headSeq, movePreview, tierMove, viewerReport, type UiDeps } from './api.js';
 import { renderPage } from './page.js';
 
 /**
@@ -107,6 +107,17 @@ export function createUiServer(deps: UiDeps, opts?: { token?: string }): { serve
           const person = url.searchParams.get('person');
           if (!person) return json(res, 400, { error: 'person query param required' });
           return json(res, 200, viewerReport(deps, person));
+        }
+        case '/api/effective': {
+          const person = url.searchParams.get('person');
+          if (!person) return json(res, 400, { error: 'person query param required' });
+          return json(res, 200, effectiveRow(deps, person));
+        }
+        case '/api/move-preview': {
+          const person = url.searchParams.get('person');
+          const to = url.searchParams.get('to');
+          if (!person || !to) return json(res, 400, { error: 'person and to query params required' });
+          return json(res, 200, movePreview(deps, person, url.searchParams.get('from'), to));
         }
         default:
           return json(res, 404, { error: 'not found' });

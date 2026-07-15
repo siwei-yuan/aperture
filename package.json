@@ -57,6 +57,7 @@
   },
   "bin": {
     "aperture-mcp": "./bin/aperture-mcp.ts",
-    "aperture": "./bin/aperture.ts"
+    "aperture": "./bin/aperture.ts",
+    "aperture-ui": "./bin/aperture-ui.ts"
   }
 }

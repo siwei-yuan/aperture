@@ -6,7 +6,7 @@ import { Ledger } from '../src/core/ledger.js';
 import { AclStore } from '../src/core/rebac.js';
 import { AtomStore } from '../src/core/store.js';
 import { linkIdentity } from '../src/session/router.js';
-import { buildState, tierMove, viewerReport, type UiDeps } from '../src/ui/api.js';
+import { buildState, movePreview, tierMove, viewerReport, type UiDeps } from '../src/ui/api.js';
 import { createUiServer } from '../src/ui/server.js';
 
 const OWNER = 'person:owner';
@@ -154,6 +154,26 @@ describe('tier move', () => {
     const deps = makeDeps();
     tierMove(deps.acl, 'person:new', null, 'friend');
     expect([...deps.ledger.events()].map((e) => e.type)).toEqual(['acl.granted']);
+  });
+
+  it('movePreview computes the per-topic diff with zero side effects', () => {
+    const deps = makeDeps();
+    deps.acl.grant({ object: 'tier:stranger', relation: 'member', subject: 'person:bob', resolution: 4 });
+    deps.acl.grant({ object: 'topic:health', relation: 'viewer', subject: 'tier:stranger#member', resolution: 1 });
+    deps.acl.grant({ object: 'topic:health', relation: 'viewer', subject: 'tier:friend#member', resolution: 3 });
+    deps.acl.grant({ object: 'topic:work', relation: 'viewer', subject: 'tier:stranger#member', resolution: 2 });
+    const eventsBefore = [...deps.ledger.events()].length;
+
+    const diff = movePreview(deps, 'person:bob', 'stranger', 'friend');
+
+    expect(diff).toEqual([
+      { topic: 'health', before: 1, after: 3 },
+      { topic: 'work', before: 2, after: 0 },
+    ]);
+    // hypothetical only: no ledger event, projection untouched
+    expect([...deps.ledger.events()]).toHaveLength(eventsBefore);
+    const state = buildState(deps);
+    expect(state.tiers.find((t) => t.name === 'stranger')!.members).toEqual(['person:bob']);
   });
 });
 
