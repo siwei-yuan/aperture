@@ -69,6 +69,13 @@ Every turn is captured automatically after it completes (`agent_end` hook, detac
 a slow distillation never blocks a reply). The agent's explicit `aperture_store` tool
 goes through the same single entrance; there is no second door.
 
+Recording is immediate, distillation is debounced: each message lands on the ledger
+the moment it arrives (step ①), but a conversation burst buffers until the room goes
+quiet (default 5 min, `debounceMs`), then distills as ONE episode — "I've been
+apartment hunting / settled on 88 Guangfu Road / moving next month" becomes one
+coherent ladder instead of three fragments. If the process dies mid-buffer, nothing
+is lost: the fragments are already on the ledger and can be re-distilled by replay.
+
 ```text
  You (Telegram) ─► "I'm moving to Shanghai next Tuesday, 88 Guangfu Road"
       │

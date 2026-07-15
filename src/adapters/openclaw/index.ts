@@ -22,6 +22,7 @@ import { Ledger } from '../../core/ledger.js';
 import { retrieveForSession } from '../../core/retrieve.js';
 import { AtomStore } from '../../core/store.js';
 import { capture } from '../../gen/capture.js';
+import { CaptureBuffer, DEFAULT_DEBOUNCE } from '../../gen/debounce.js';
 import { LlmLayerGenerator, type LlmClient } from '../../gen/llm-generator.js';
 import { linkIdentity, resolveIdentity, sessionFor } from '../../session/router.js';
 
@@ -36,6 +37,12 @@ export interface ApertureDeps {
   topics?: string[];
   /** Proactive push to the owner (promotion / new-contact notices). Absent = no pushes. */
   notifyOwner?: (text: string) => void | Promise<void>;
+  /**
+   * Quiet gap (ms) before a session's buffered turns are distilled as one
+   * burst. 0 = distill every turn immediately. Recording on the ledger is
+   * always immediate either way.
+   */
+  debounceMs?: number;
 }
 
 /** The slice of the host API the adapter consumes — fake-able in tests. */
@@ -142,15 +149,23 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
     },
   });
 
-  // auto-capture: recording is unconditional, distillation is adjudicated.
-  // Distillation runs AFTER the turn and must not block it (design: async
-  // distillation), so the hook fires capture detached and returns at once —
-  // a slow local model can never time the turn out.
+  // auto-capture: recording is unconditional and immediate; distillation is
+  // adjudicated and DEBOUNCED — a session's turns buffer until the
+  // conversation goes quiet, then the whole burst distills as one episode
+  // (one coherent ladder instead of per-turn fragments). Everything runs
+  // detached, so a slow local model can never time a turn out.
   //
   // Non-owner content lands room-local: immediately usable in its own room,
   // globally retrievable only after an owner-signed promotion. Writing is
   // silent by design — the owner is consulted on demand (see recall hook),
   // not on every message.
+  const debounceMs = config.debounceMs ?? DEFAULT_DEBOUNCE.quietMs;
+  const buffer = new CaptureBuffer(
+    { db, ledger, pipeline },
+    ownerId,
+    { ...DEFAULT_DEBOUNCE, quietMs: debounceMs },
+  );
+
   api.on('agent_end', async (event, ctx) => {
     const content = transcriptOf(event.messages);
     if (!content) return;
@@ -167,17 +182,21 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
           peerExternalIds: [externalId],
         })
       : undefined;
-    void capture(
-      { db, ledger, pipeline },
-      {
-        content,
-        subject: [who],
-        topics,
-        source: { who, channel, ts: Date.now() },
-        acquisitionContext: channel,
-        acquisitionAudience: session?.audience ?? [who],
-      },
-    ).catch((err) => console.error('[aperture] capture failed:', err));
+    const fragment = {
+      content,
+      subject: [who],
+      topics,
+      source: { who, channel, ts: Date.now() },
+      acquisitionContext: channel,
+      acquisitionAudience: session?.audience ?? [who],
+    };
+    if (debounceMs <= 0) {
+      void capture({ db, ledger, pipeline }, fragment).catch((err) =>
+        console.error('[aperture] capture failed:', err),
+      );
+      return;
+    }
+    buffer.add(session?.id ?? channel, fragment);
   });
 
   // egress: second line of defense over the finished outbound reply.
@@ -333,6 +352,7 @@ const CONFIG_SCHEMA = {
     ownerId: { type: 'string' },
     ownerExternalIds: { type: 'object', additionalProperties: { type: 'string' } },
     topics: { type: 'array', items: { type: 'string' } },
+    debounceMs: { type: 'number' },
     llm: ENDPOINT_SCHEMA,
     embed: ENDPOINT_SCHEMA,
   },
@@ -350,6 +370,7 @@ export default definePluginEntry({
       ownerId?: string;
       ownerExternalIds?: Record<string, string>;
       topics?: string[];
+      debounceMs?: number;
       llm?: EndpointConfig;
       embed?: EndpointConfig;
     };
@@ -380,6 +401,7 @@ export default definePluginEntry({
       generator: makeGenerator(cfg.llm),
       embedder: makeEmbedder(cfg.embed),
       topics: cfg.topics,
+      debounceMs: cfg.debounceMs,
       notifyOwner,
     });
   },

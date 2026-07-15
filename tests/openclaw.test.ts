@@ -70,7 +70,7 @@ function fakeHost() {
   return { api, hooks, fire, command, tools };
 }
 
-async function makePlugin() {
+async function makePlugin(opts?: { debounceMs?: number }) {
   const db = new Database(':memory:');
   const store = new AtomStore(db);
   const ledger = new Ledger(db);
@@ -89,6 +89,9 @@ async function makePlugin() {
     generator: { generate: async () => structuredClone(drafts) },
     embedder: hashEmbedder(32),
     topics: ['activity'],
+    // Tests exercise per-turn capture by default; the burst debounce has its
+    // own dedicated test below (and core coverage in debounce.test.ts).
+    debounceMs: opts?.debounceMs ?? 0,
     notifyOwner: (text) => {
       ownerPushes.push(text);
     },
@@ -288,6 +291,19 @@ describe('OpenClaw adapter (real hook contract)', () => {
     });
     expect(res.text).toBe('aperture: owner only');
     expect(store.listLocal()).toHaveLength(1);
+  });
+
+  it('with debounce on, a burst of turns distills into one atom after the quiet gap', async () => {
+    const { host, store } = await makePlugin({ debounceMs: 40 });
+    const turn = (text: string) => ({ messages: [{ role: 'user', content: text }], success: true });
+
+    await host.fire('agent_end', turn('bob: I have been apartment hunting'), agentCtx());
+    await host.fire('agent_end', turn('bob: settled on 88 guangfu road, moving next month'), agentCtx());
+    expect(store.listLocal()).toHaveLength(0); // nothing distilled mid-burst
+
+    await new Promise((r) => setTimeout(r, 120)); // quiet gap elapses
+    const local = store.listLocal();
+    expect(local).toHaveLength(1); // ONE coherent atom for the whole burst
   });
 
   it('a first-time sender triggers exactly one new-contact push, in the live hook order', async () => {

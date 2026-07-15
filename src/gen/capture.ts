@@ -19,17 +19,8 @@ export type CaptureResult =
   | { gated: string; detail: string }
   | { ingest: IngestResult };
 
-/**
- * The single ingress entrance. Recording is unconditional (gate 0: every
- * episode lands on the ledger as `ingress.received` — the tape anchor);
- * distillation is adjudicated (gates 1–2). Survivors of the deterministic
- * gates get their fingerprint recorded and exactly one shot at the LLM.
- */
-export async function capture(
-  deps: CaptureDeps,
-  episode: RawEvent,
-  config: PrefilterConfig = DEFAULT_PREFILTER,
-): Promise<CaptureResult> {
+/** Gate 0 alone: the unconditional, immediate tape anchor. */
+export function recordIngress(deps: CaptureDeps, episode: RawEvent): void {
   deps.ledger.append(
     'ingress.received',
     {
@@ -39,7 +30,17 @@ export async function capture(
     },
     episode.source.ts,
   );
+}
 
+/**
+ * Gates 1–2: deterministic prefilter, then exactly one shot at the LLM.
+ * Callers must have recorded ingress already (directly or via a buffer).
+ */
+export async function distill(
+  deps: CaptureDeps,
+  episode: RawEvent,
+  config: PrefilterConfig = DEFAULT_PREFILTER,
+): Promise<CaptureResult> {
   const gate = prefilter(deps.db, episode, config);
   if (!gate.pass) return { gated: gate.gate, detail: gate.detail };
 
@@ -50,4 +51,20 @@ export async function capture(
   const ingest = await deps.pipeline.ingest(episode);
   recordFingerprint(deps.db, simhash64(episode.content), episode.source.ts, config);
   return { ingest };
+}
+
+/**
+ * The single-shot ingress entrance. Recording is unconditional (gate 0:
+ * every episode lands on the ledger as `ingress.received` — the tape
+ * anchor); distillation is adjudicated (gates 1–2). For conversational
+ * sources prefer `CaptureBuffer`, which records per message but distills
+ * whole bursts.
+ */
+export async function capture(
+  deps: CaptureDeps,
+  episode: RawEvent,
+  config: PrefilterConfig = DEFAULT_PREFILTER,
+): Promise<CaptureResult> {
+  recordIngress(deps, episode);
+  return distill(deps, episode, config);
 }

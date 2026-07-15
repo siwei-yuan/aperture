@@ -31,8 +31,10 @@ export type {
   SemanticEntailment,
   SkipDecision,
 } from './core/ingest.js';
-export { capture } from './gen/capture.js';
+export { capture, distill, recordIngress } from './gen/capture.js';
 export type { CaptureDeps, CaptureResult } from './gen/capture.js';
+export { CaptureBuffer, DEFAULT_DEBOUNCE } from './gen/debounce.js';
+export type { DebounceConfig } from './gen/debounce.js';
 export { DEFAULT_PREFILTER, hamming64, prefilter, recordFingerprint, simhash64 } from './gen/prefilter.js';
 export type { PrefilterConfig, PrefilterResult } from './gen/prefilter.js';
 export { LlmLayerGenerator, SYSTEM_PROMPT } from './gen/llm-generator.js';

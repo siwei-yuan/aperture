@@ -32,6 +32,9 @@
           "type": "string"
         }
       },
+      "debounceMs": {
+        "type": "number"
+      },
       "llm": {
         "type": "object",
         "additionalProperties": false,
