@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
+import type { AtomScope, MemoryAtom } from '../core/atom.js';
 import { disclosureProfile } from '../core/disclosure-profile.js';
 import type { Ledger } from '../core/ledger.js';
-import { check, type AclStore, type RelationTuple } from '../core/rebac.js';
+import { ceilingsForAudience, check, topicAncestors, type AclStore, type RelationTuple } from '../core/rebac.js';
 import type { AtomStore } from '../core/store.js';
 import { ensureSessionTables } from '../session/router.js';
 
@@ -296,6 +297,140 @@ export function viewerReport(deps: UiDeps, viewer: string): ViewerReport {
     knownAtoms,
     timeline,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge browser: every atom, every dimension — the owner's own shelf
+// ---------------------------------------------------------------------------
+
+export interface TopicTreeNode {
+  /** Full hierarchical path, e.g. "work/alpha". */
+  path: string;
+  /** Atoms whose topics fall inside this subtree (all scopes). */
+  atomCount: number;
+  children: TopicTreeNode[];
+}
+
+export interface AtomCard {
+  atomId: string;
+  scope: AtomScope;
+  topics: string[];
+  subject: string[];
+  who: string;
+  channel: string;
+  ts: number;
+  acquisitionAudience: string[];
+  layers: Array<{ level: number; text: string; entities: string[] }>;
+  /** Present only when the listing is filtered to a viewer: their effective layer. */
+  viewerLevel?: number;
+}
+
+/** Every atom, sealed included — the owner's shelf shows rejects too. */
+function allAtoms(store: AtomStore): MemoryAtom[] {
+  return [...store.listRetrievable(), ...store.listByScope('sealed')];
+}
+
+/** Subtree membership, same ancestor semantics the evaluator uses. */
+function inSubtree(topic: string, root: string): boolean {
+  return topicAncestors(topic).includes(root);
+}
+
+/**
+ * The topic hierarchy as observable from the db: actual atom topics ∪ policy
+ * tuple topics ∪ `topic.discovered` events. (The configured topicTaxonomy
+ * lives in the gateway's pluginConfig, out of this process's reach — but
+ * every signed taxonomy entry surfaces here through its policy tuple.)
+ * Intermediate path segments materialize as nodes ("work/alpha" implies
+ * "work"); counts are per subtree.
+ */
+export function topicTree(deps: UiDeps): TopicTreeNode[] {
+  const atoms = allAtoms(deps.store);
+  const paths = new Set<string>();
+  for (const atom of atoms) for (const t of atom.topics) for (const a of topicAncestors(t)) paths.add(a);
+  for (const t of tupleRows(deps.db)) {
+    if (t.object.startsWith('topic:')) for (const a of topicAncestors(t.object.slice('topic:'.length))) paths.add(a);
+  }
+  for (const event of deps.ledger.events()) {
+    if (event.type === 'topic.discovered') {
+      for (const a of topicAncestors((event.payload as { topic: string }).topic)) paths.add(a);
+    }
+  }
+
+  const count = (root: string): number => atoms.filter((a) => a.topics.some((t) => inSubtree(t, root))).length;
+  const nodeFor = (path: string): TopicTreeNode => ({
+    path,
+    atomCount: count(path),
+    children: [...paths]
+      .filter((p) => p.startsWith(`${path}/`) && !p.slice(path.length + 1).includes('/'))
+      .sort()
+      .map(nodeFor),
+  });
+  return [...paths].filter((p) => !p.includes('/')).sort().map(nodeFor);
+}
+
+/**
+ * The atom listing, newest first. `topic` filters by subtree (ancestor
+ * semantics); `viewer` narrows to what that person can actually see, using
+ * the very ceiling logic retrieval uses (single-member audience), and
+ * annotates each card with their effective layer.
+ */
+export function listAtoms(
+  deps: UiDeps,
+  filter: { scope?: AtomScope | null; topic?: string | null; viewer?: string | null },
+): AtomCard[] {
+  let atoms = allAtoms(deps.store);
+  if (filter.scope) atoms = atoms.filter((a) => a.scope === filter.scope);
+  if (filter.topic) atoms = atoms.filter((a) => a.topics.some((t) => inSubtree(t, filter.topic!)));
+
+  let ceilings: Map<string, number> | null = null;
+  if (filter.viewer) {
+    ceilings = ceilingsForAudience(deps.db, [filter.viewer], atoms);
+    atoms = atoms.filter((a) => ceilings!.has(a.id));
+  }
+
+  return atoms
+    .sort((a, b) => b.source.ts - a.source.ts)
+    .map((a) => ({
+      atomId: a.id,
+      scope: a.scope,
+      topics: a.topics,
+      subject: a.subject,
+      who: a.source.who,
+      channel: a.source.channel,
+      ts: a.source.ts,
+      acquisitionAudience: a.acquisitionAudience,
+      layers: a.layers.map((l) => ({ level: l.level, text: l.text, entities: l.entities })),
+      ...(ceilings ? { viewerLevel: Math.min(ceilings.get(a.id)!, a.layers.length) } : {}),
+    }));
+}
+
+/**
+ * "Who sees which layer" for one atom: every known person, each evaluated
+ * with the same single-member ceiling retrieval uses. Level 0 = invisible.
+ */
+export function atomVisibility(
+  deps: UiDeps,
+  atomId: string,
+): { atomId: string; people: Array<{ personId: string; level: number }> } {
+  const atom = deps.store.get(atomId);
+  if (!atom) throw new Error(`unknown atom "${atomId}"`);
+
+  ensureSessionTables(deps.db);
+  const personIds = new Set<string>([deps.ownerId]);
+  const aliasRows = deps.db.prepare('SELECT DISTINCT person_id FROM aliases').all() as Array<{ person_id: string }>;
+  for (const r of aliasRows) personIds.add(r.person_id);
+  for (const t of tupleRows(deps.db)) if (t.subject.startsWith('person:')) personIds.add(t.subject);
+  // The atom's own room matters even for people known nowhere else —
+  // presence at acquisition is exactly what makes local atoms visible.
+  personIds.add(atom.source.who);
+  for (const p of atom.acquisitionAudience) personIds.add(p);
+
+  const people = [...personIds].sort().map((personId) => {
+    const ceiling = ceilingsForAudience(deps.db, [personId], [atom]).get(atom.id) ?? 0;
+    return { personId, level: Math.min(ceiling, atom.layers.length) };
+  });
+  people.sort((a, b) => b.level - a.level || a.personId.localeCompare(b.personId));
+  return { atomId, people };
 }
 
 function topicNames(deps: UiDeps): string[] {

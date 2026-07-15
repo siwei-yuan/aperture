@@ -125,6 +125,33 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
 .diff .up { color: var(--accent); }
 .diff .down { color: var(--danger); }
 .muted { color: var(--muted); }
+
+/* knowledge browser */
+#knowledge { display: flex; gap: 20px; align-items: flex-start; }
+#ktree { width: 240px; flex: none; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.knode { cursor: pointer; padding: 3px 8px; border-radius: 6px; display: flex; justify-content: space-between; gap: 8px; }
+.knode:hover { background: var(--bg2); }
+.knode.on { background: #eff6ff; color: var(--accent); font-weight: 600; }
+.knode .cnt { color: var(--muted); font-weight: 400; }
+#kmain { flex: 1; min-width: 0; }
+.kfilters { display: flex; gap: 10px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+.kcard { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
+.kcard .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; cursor: pointer; }
+.kcard .src { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.badge { font-size: 11px; border-radius: 4px; padding: 1px 7px; font-weight: 600; }
+.badge.global { background: #dbeafe; color: #1d4ed8; }
+.badge.local { background: #fef3c7; color: #92400e; }
+.badge.sealed { background: #f3f4f6; color: #6b7280; }
+.badge.vlevel { border: 1px solid var(--accent); color: var(--accent); background: none; }
+.rung { border-left: 3px solid var(--line); padding: 4px 10px; margin-top: 2px; }
+.rung .ent { color: var(--muted); font-size: 11px; }
+.rung.d1 { border-left-color: #dbeafe; }
+.rung.d2 { border-left-color: #93c5fd; }
+.rung.d3 { border-left-color: #3b82f6; }
+.rung.d4 { border-left-color: #1d4ed8; }
+.vtable { margin-top: 8px; border-collapse: collapse; }
+.vtable th, .vtable td { border-bottom: 1px solid var(--line); padding: 3px 10px 3px 0; font-size: 13px; text-align: left; font-weight: 400; }
+.vtable th { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -133,6 +160,7 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
   <nav>
     <button data-view="circles">Circles</button>
     <button data-view="matrix" class="active">Matrix</button>
+    <button data-view="knowledge">Knowledge</button>
     <button data-view="reverse">Disclosures</button>
   </nav>
   <span id="sync"></span>
@@ -155,6 +183,10 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
   var pendingException = null; // matrix: person picked for a not-yet-explicit exception row
   var auditChecks = {};       // matrix audit mode selections
   var expandedAtoms = {};     // reverse view ladder expansion
+  var kTopic = null;          // knowledge: selected topic subtree
+  var kScope = '';            // knowledge: scope filter ('' = all)
+  var kViewer = '';           // knowledge: someone's-perspective filter
+  var kExpanded = {};         // knowledge: expanded cards
 
   // ---- helpers ------------------------------------------------------------
 
@@ -238,6 +270,7 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
     }
     if (currentView === 'matrix') renderMatrix(root);
     else if (currentView === 'reverse') renderReverse(root);
+    else if (currentView === 'knowledge') renderKnowledge(root);
     else renderCircles(root);
   }
 
@@ -495,6 +528,161 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
       box.appendChild(cols);
       root.appendChild(box);
     });
+  }
+
+  // ---- view D: knowledge browser ------------------------------------------------
+
+  function renderKnowledge(root) {
+    root.appendChild(el('h2', { text: 'Knowledge — every memory, every dimension' }));
+
+    var params = [];
+    if (kScope) params.push('scope=' + encodeURIComponent(kScope));
+    if (kTopic) params.push('topic=' + encodeURIComponent(kTopic));
+    if (kViewer) params.push('viewer=' + encodeURIComponent(kViewer));
+    var atomsUrl = '/api/atoms' + (params.length ? '?' + params.join('&') : '');
+
+    Promise.all([api('/api/topics'), api(atomsUrl)]).then(function (results) {
+      var tree = results[0], atoms = results[1];
+      var wrap = el('div', { id: 'knowledge' });
+
+      // --- left: topic tree
+      var side = el('div', { id: 'ktree' });
+      var allRow = el('div', { class: 'knode' + (kTopic === null ? ' on' : '') }, [
+        el('span', { text: 'all topics' }),
+      ]);
+      allRow.addEventListener('click', function () { kTopic = null; render(); });
+      side.appendChild(allRow);
+      var addNodes = function (nodes, depth) {
+        nodes.forEach(function (n) {
+          var row = el('div', { class: 'knode' + (kTopic === n.path ? ' on' : ''), style: 'padding-left:' + (8 + depth * 14) + 'px' }, [
+            el('span', { text: n.path.split('/').pop() }),
+            el('span', { class: 'cnt', text: String(n.atomCount) }),
+          ]);
+          row.title = n.path;
+          row.addEventListener('click', function () { kTopic = kTopic === n.path ? null : n.path; render(); });
+          side.appendChild(row);
+          addNodes(n.children, depth + 1);
+        });
+      };
+      addNodes(tree, 0);
+
+      // --- right: filters + cards
+      var main = el('div', { id: 'kmain' });
+      var scopeSel = el('select', {}, [
+        el('option', { value: '', text: 'all scopes' }),
+        el('option', { value: 'global', text: 'global' }),
+        el('option', { value: 'local', text: 'local (room-bound)' }),
+        el('option', { value: 'sealed', text: 'sealed (rejected)' }),
+      ]);
+      scopeSel.value = kScope;
+      scopeSel.addEventListener('change', function () { kScope = scopeSel.value; render(); });
+      var viewerSel = el('select', {}, [el('option', { value: '', text: 'everything (owner view)' })].concat(
+        state.people.filter(function (p) { return !p.isOwner; }).map(function (p) {
+          return el('option', { value: p.personId, text: 'as seen by ' + personLabel(p.personId) });
+        })
+      ));
+      viewerSel.value = kViewer;
+      viewerSel.addEventListener('change', function () { kViewer = viewerSel.value; render(); });
+      var filters = el('div', { class: 'kfilters' }, [
+        scopeSel,
+        viewerSel,
+        el('span', { class: 'muted', text: atoms.length + ' atom' + (atoms.length === 1 ? '' : 's') + (kTopic ? ' in ' + kTopic : '') }),
+      ]);
+      main.appendChild(filters);
+      if (kViewer) {
+        main.appendChild(el('div', { class: 'notice', text: 'Perspective mode: only memories ' + personLabel(kViewer) + ' can retrieve, each marked with their deepest visible layer. This is the same ceiling logic retrieval uses.' }));
+      }
+
+      if (!atoms.length) main.appendChild(el('div', { class: 'muted', text: 'no atoms match these filters' }));
+      atoms.forEach(function (a) { main.appendChild(kCard(a)); });
+
+      wrap.appendChild(side);
+      wrap.appendChild(main);
+      root.appendChild(wrap);
+    });
+  }
+
+  function kCard(a) {
+    var card = el('div', { class: 'kcard' });
+
+    var badge;
+    if (a.scope === 'local') {
+      badge = el('span', { class: 'badge local', text: 'local · room: ' + a.acquisitionAudience.map(personLabel).join(', ') });
+      badge.title = 'usable only where everyone present already heard it; promotion makes it global';
+    } else if (a.scope === 'sealed') {
+      badge = el('span', { class: 'badge sealed', text: 'sealed — visible nowhere' });
+    } else {
+      badge = el('span', { class: 'badge global', text: 'global' });
+    }
+
+    var head = el('div', { class: 'head' }, [badge]);
+    if (a.viewerLevel !== undefined) {
+      head.appendChild(el('span', { class: 'badge vlevel', text: 'sees L' + a.viewerLevel + '/' + a.layers.length }));
+    }
+    head.appendChild(el('span', { text: (a.layers[0] && a.layers[0].text) || '(no layers)' }));
+    a.topics.forEach(function (t) {
+      var chip = el('span', { class: 'chip', text: t });
+      chip.addEventListener('click', function (ev) { ev.stopPropagation(); kTopic = t; render(); });
+      head.appendChild(chip);
+    });
+    head.addEventListener('click', function () { kExpanded[a.atomId] = !kExpanded[a.atomId]; render(); });
+    card.appendChild(head);
+    card.appendChild(el('div', { class: 'src', text: 'from ' + personLabel(a.who) + ' · ' + a.channel + ' · ' + fmtTs(a.ts) }));
+
+    if (!kExpanded[a.atomId]) return card;
+
+    // full ladder — the owner's shelf shows everything
+    var ladder = el('div', { class: 'ladder' });
+    a.layers.forEach(function (l) {
+      ladder.appendChild(el('div', { class: 'rung d' + l.level, style: 'margin-left:' + ((l.level - 1) * 14) + 'px' }, [
+        el('div', {}, [el('b', { text: 'L' + l.level + '  ' }), document.createTextNode(l.text)]),
+        l.entities.length ? el('div', { class: 'ent', text: 'entities: ' + l.entities.join(', ') }) : null,
+      ]));
+    });
+    card.appendChild(ladder);
+
+    // who sees which layer — fetched fresh on every expand (grants may have moved)
+    var visBox = el('div');
+    card.appendChild(visBox);
+    api('/api/atoms/' + encodeURIComponent(a.atomId) + '/visibility').then(function (vis) {
+      var table = el('table', { class: 'vtable' }, [
+        el('tr', {}, [el('th', { text: 'who' }), el('th', { text: 'sees' })]),
+      ]);
+      var hidden = vis.people.filter(function (p) { return p.level === 0; });
+      vis.people.filter(function (p) { return p.level > 0; }).forEach(function (p) {
+        table.appendChild(el('tr', {}, [
+          el('td', { text: personLabel(p.personId) }),
+          el('td', { text: 'L' + p.level + '/' + a.layers.length + ' — "' + (a.layers[p.level - 1] ? a.layers[p.level - 1].text : '') + '"' }),
+        ]));
+      });
+      if (hidden.length) {
+        table.appendChild(el('tr', {}, [
+          el('td', { class: 'muted', text: hidden.length + ' other' + (hidden.length === 1 ? ' person' : ' people') }),
+          el('td', { class: 'muted', text: 'not visible' }),
+        ]));
+      }
+      visBox.appendChild(el('h2', { text: 'who sees which layer' }));
+      visBox.appendChild(table);
+    });
+
+    // local atoms carry the two owner verbs — straight pass-throughs
+    if (a.scope === 'local') {
+      var promoteBtn = el('button', { class: 'act', text: 'Promote to global' });
+      promoteBtn.addEventListener('click', function () {
+        if (confirm('Promote? It becomes retrievable everywhere, layer-gated by the matrix.')) {
+          post('/api/promote', { atomId: a.atomId });
+        }
+      });
+      var sealBtn = el('button', { class: 'ghost', text: 'Seal (reject)', style: 'margin-left:8px' });
+      sealBtn.addEventListener('click', function () {
+        if (confirm('Seal? It becomes visible nowhere (stays on the ledger for audit).')) {
+          post('/api/seal', { atomId: a.atomId });
+        }
+      });
+      card.appendChild(el('div', { style: 'margin-top:10px' }, [promoteBtn, sealBtn]));
+    }
+
+    return card;
   }
 
   // ---- view A: circles --------------------------------------------------------

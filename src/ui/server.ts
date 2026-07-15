@@ -2,7 +2,18 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { promoteAtom, sealAtom } from '../core/ingest.js';
-import { buildState, effectiveRow, headSeq, movePreview, tierMove, viewerReport, type UiDeps } from './api.js';
+import {
+  atomVisibility,
+  buildState,
+  effectiveRow,
+  headSeq,
+  listAtoms,
+  movePreview,
+  tierMove,
+  topicTree,
+  viewerReport,
+  type UiDeps,
+} from './api.js';
 import { renderPage } from './page.js';
 
 /**
@@ -98,11 +109,33 @@ export function createUiServer(deps: UiDeps, opts?: { token?: string }): { serve
     if (!authorized(req)) return json(res, 401, { error: 'missing or bad token' });
 
     if (req.method === 'GET') {
+      // /api/atoms/:id/visibility (atom ids are uuids — no slashes)
+      const visMatch = /^\/api\/atoms\/([^/]+)\/visibility$/.exec(url.pathname);
+      if (visMatch) {
+        try {
+          return json(res, 200, atomVisibility(deps, decodeURIComponent(visMatch[1]!)));
+        } catch (err) {
+          return json(res, 404, { error: err instanceof Error ? err.message : String(err) });
+        }
+      }
       switch (url.pathname) {
         case '/api/head':
           return json(res, 200, { seq: headSeq(deps.db) });
         case '/api/state':
           return json(res, 200, buildState(deps));
+        case '/api/topics':
+          return json(res, 200, topicTree(deps));
+        case '/api/atoms': {
+          const scope = url.searchParams.get('scope');
+          if (scope && !['local', 'global', 'sealed'].includes(scope)) {
+            return json(res, 400, { error: `unknown scope "${scope}"` });
+          }
+          return json(res, 200, listAtoms(deps, {
+            scope: scope as 'local' | 'global' | 'sealed' | null,
+            topic: url.searchParams.get('topic'),
+            viewer: url.searchParams.get('viewer'),
+          }));
+        }
         case '/api/viewer': {
           const person = url.searchParams.get('person');
           if (!person) return json(res, 400, { error: 'person query param required' });

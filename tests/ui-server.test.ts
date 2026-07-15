@@ -6,7 +6,7 @@ import { Ledger } from '../src/core/ledger.js';
 import { AclStore } from '../src/core/rebac.js';
 import { AtomStore } from '../src/core/store.js';
 import { linkIdentity } from '../src/session/router.js';
-import { buildState, movePreview, tierMove, viewerReport, type UiDeps } from '../src/ui/api.js';
+import { atomVisibility, buildState, listAtoms, movePreview, tierMove, topicTree, viewerReport, type UiDeps } from '../src/ui/api.js';
 import { parseTokenFromHash, renderPage } from '../src/ui/page.js';
 import { createUiServer } from '../src/ui/server.js';
 
@@ -175,6 +175,89 @@ describe('tier move', () => {
     expect([...deps.ledger.events()]).toHaveLength(eventsBefore);
     const state = buildState(deps);
     expect(state.tiers.find((t) => t.name === 'stranger')!.members).toEqual(['person:bob']);
+  });
+});
+
+describe('knowledge browser: topic tree and atom listing', () => {
+  it('topic filter matches by subtree, same ancestor semantics as the evaluator', () => {
+    const deps = makeDeps();
+    deps.store.insert(atom('a-work', ['work'], 2));
+    deps.store.insert(atom('a-alpha', ['work/alpha'], 2));
+    deps.store.insert(atom('a-life', ['life'], 2));
+
+    expect(listAtoms(deps, { topic: 'work' }).map((a) => a.atomId).sort()).toEqual(['a-alpha', 'a-work']);
+    expect(listAtoms(deps, { topic: 'work/alpha' }).map((a) => a.atomId)).toEqual(['a-alpha']);
+    expect(listAtoms(deps, { topic: 'life' }).map((a) => a.atomId)).toEqual(['a-life']);
+  });
+
+  it('scope filter includes sealed atoms — the owner shelf shows rejects', () => {
+    const deps = makeDeps();
+    deps.store.insert(atom('a-g', ['work'], 2, 'global'));
+    deps.store.insert(atom('a-l', ['work'], 2, 'local'));
+    deps.store.insert(atom('a-s', ['work'], 2, 'sealed'));
+
+    expect(listAtoms(deps, {}).map((a) => a.atomId).sort()).toEqual(['a-g', 'a-l', 'a-s']);
+    expect(listAtoms(deps, { scope: 'sealed' }).map((a) => a.atomId)).toEqual(['a-s']);
+  });
+
+  it('topic tree materializes intermediate nodes with subtree counts, folding in policy-only and discovered topics', () => {
+    const deps = makeDeps();
+    deps.store.insert(atom('a1', ['work/alpha'], 2));
+    deps.store.insert(atom('a2', ['work/alpha'], 2));
+    deps.store.insert(atom('a3', ['work'], 2));
+    deps.acl.grant({ object: 'topic:health', relation: 'viewer', subject: 'tier:friend#member', resolution: 2 });
+    deps.ledger.append('topic.discovered', { topic: 'hobby/climbing', atomId: 'a1' });
+
+    const tree = topicTree(deps);
+    expect(tree.map((n) => n.path)).toEqual(['health', 'hobby', 'work']);
+    const work = tree.find((n) => n.path === 'work')!;
+    expect(work.atomCount).toBe(3); // whole subtree
+    expect(work.children).toEqual([{ path: 'work/alpha', atomCount: 2, children: [] }]);
+    expect(tree.find((n) => n.path === 'health')!.atomCount).toBe(0);
+    expect(tree.find((n) => n.path === 'hobby')!.children[0]!.path).toBe('hobby/climbing');
+  });
+
+  it('viewer filter reproduces retrieval ceilings: ancestor grants apply, invisible atoms drop out', () => {
+    const deps = makeDeps();
+    deps.acl.grant({ object: 'tier:friend', relation: 'member', subject: 'person:carol', resolution: 4 });
+    deps.acl.grant({ object: 'topic:work', relation: 'viewer', subject: 'tier:friend#member', resolution: 3 });
+    deps.store.insert(atom('a-alpha', ['work/alpha'], 2, 'global')); // covered by the coarse "work" grant
+    deps.store.insert(atom('a-life', ['life'], 4, 'global')); // no grant — invisible
+    deps.store.insert(atom('a-local', ['work'], 3, 'local')); // carol was not in the room
+
+    const seen = listAtoms(deps, { viewer: 'person:carol' });
+    expect(seen.map((a) => a.atomId)).toEqual(['a-alpha']);
+    // resolution 3 clamped to the 2-layer ladder
+    expect(seen[0]!.viewerLevel).toBe(2);
+
+    // bob WAS in the room (test atoms carry him in acquisitionAudience): local visible at full depth
+    const bobSees = listAtoms(deps, { viewer: 'person:bob' });
+    expect(bobSees.find((a) => a.atomId === 'a-local')!.viewerLevel).toBe(3);
+  });
+
+  it('atomVisibility walks every known person through the real ceiling logic per scope', () => {
+    const deps = makeDeps();
+    linkIdentity(deps.db, 'telegram', 'carol_tg', 'person:carol');
+    deps.acl.grant({ object: 'tier:friend', relation: 'member', subject: 'person:carol', resolution: 4 });
+    deps.acl.grant({ object: 'topic:work', relation: 'viewer', subject: 'tier:friend#member', resolution: 1 });
+    deps.acl.grant({ object: 'topic:work', relation: 'viewer', subject: OWNER, resolution: 4 });
+
+    deps.store.insert(atom('a-g', ['work'], 4, 'global'));
+    const globalVis = atomVisibility(deps, 'a-g').people;
+    expect(globalVis).toContainEqual({ personId: OWNER, level: 4 });
+    expect(globalVis).toContainEqual({ personId: 'person:carol', level: 1 });
+    // bob has no grants: level 0 despite being the source
+    expect(globalVis).toContainEqual({ personId: 'person:bob', level: 0 });
+
+    deps.store.insert(atom('a-l', ['work'], 3, 'local'));
+    const localVis = atomVisibility(deps, 'a-l').people;
+    // presence beats policy: bob (in the acquisition room) sees the full ladder, carol nothing
+    expect(localVis).toContainEqual({ personId: 'person:bob', level: 3 });
+    expect(localVis).toContainEqual({ personId: OWNER, level: 3 });
+    expect(localVis).toContainEqual({ personId: 'person:carol', level: 0 });
+
+    deps.store.insert(atom('a-s', ['work'], 4, 'sealed'));
+    expect(atomVisibility(deps, 'a-s').people.every((p) => p.level === 0)).toBe(true);
   });
 });
 
