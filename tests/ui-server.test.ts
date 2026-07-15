@@ -7,6 +7,7 @@ import { AclStore } from '../src/core/rebac.js';
 import { AtomStore } from '../src/core/store.js';
 import { linkIdentity } from '../src/session/router.js';
 import { buildState, movePreview, tierMove, viewerReport, type UiDeps } from '../src/ui/api.js';
+import { parseTokenFromHash, renderPage } from '../src/ui/page.js';
 import { createUiServer } from '../src/ui/server.js';
 
 const OWNER = 'person:owner';
@@ -174,6 +175,34 @@ describe('tier move', () => {
     expect([...deps.ledger.events()]).toHaveLength(eventsBefore);
     const state = buildState(deps);
     expect(state.tiers.find((t) => t.name === 'stranger')!.members).toEqual(['person:bob']);
+  });
+});
+
+describe('token fragment parsing', () => {
+  const hex = 'deadbeef00112233deadbeef00112233';
+
+  it('parses the plain fragment the server prints', () => {
+    expect(parseTokenFromHash(`#t=${hex}`)).toBe(hex);
+  });
+
+  it('parses a percent-encoded fragment (some openers encode "=" as %3D)', () => {
+    expect(parseTokenFromHash(`#t%3D${hex}`)).toBe(hex);
+    expect(parseTokenFromHash(`#%74%3D${hex}`)).toBe(hex); // fully encoded
+  });
+
+  it('rejects hashes without a token instead of matching noise', () => {
+    expect(parseTokenFromHash('')).toBe('');
+    expect(parseTokenFromHash('#')).toBe('');
+    expect(parseTokenFromHash('#view=matrix')).toBe('');
+    expect(parseTokenFromHash(`#nott=${hex}`)).toBe(''); // "t=" must start a fragment param
+  });
+
+  it('tolerates malformed percent-escapes by falling back to the raw hash', () => {
+    expect(parseTokenFromHash(`#t=${hex}%E0%A4%A`)).toBe(hex);
+  });
+
+  it('the served page embeds this exact parser', () => {
+    expect(renderPage()).toContain('function parseTokenFromHash');
   });
 });
 

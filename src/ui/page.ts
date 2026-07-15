@@ -7,6 +7,25 @@
  * texts, aliases, topic names) is untrusted and enters the DOM exclusively
  * through textContent — the el() helper has no innerHTML path for data.
  */
+/**
+ * Token out of the URL fragment. Some openers (observed: Cursor's built-in
+ * browser) percent-encode the fragment, turning "#t=abc" into "#t%3Dabc" —
+ * so decode first, and fall back to the raw hash when the percent-encoding
+ * is malformed. Kept as an exported function (in ES5-compatible style, no
+ * closure over module state) so tests exercise the exact code the page
+ * runs: its compiled source is serialized into the page script below.
+ */
+export function parseTokenFromHash(hash: string): string {
+  var decoded = hash;
+  try {
+    decoded = decodeURIComponent(hash);
+  } catch (e) {
+    /* malformed %-escape: use the hash as-is */
+  }
+  var m = /(?:^|[#&])t=([0-9a-f]+)/.exec(decoded);
+  return m ? m[1]! : '';
+}
+
 export function renderPage(): string {
   return `<!doctype html>
 <html lang="en">
@@ -125,7 +144,8 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
 (function () {
   'use strict';
 
-  var token = (location.hash.match(/t=([0-9a-f]+)/) || [])[1] || '';
+  var parseTokenFromHash = ${parseTokenFromHash.toString()};
+  var token = parseTokenFromHash(location.hash);
   var state = null;
   var headSeq = -1;
   var currentView = 'matrix';
@@ -161,7 +181,7 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
     opts = opts || {};
     opts.headers = Object.assign({ authorization: 'Bearer ' + token }, opts.headers || {});
     return fetch(path, opts).then(function (res) {
-      if (res.status === 401) { banner('No/invalid token — open the exact URL printed by aperture-ui (the #t=… part matters).'); throw new Error('unauthorized'); }
+      if (res.status === 401) { banner('No/invalid token — open the exact URL printed by aperture-ui (the #t=… part matters).', true); throw new Error('unauthorized'); }
       return res.json().then(function (body) {
         if (!res.ok) { banner(body.error || ('HTTP ' + res.status)); throw new Error(body.error || res.status); }
         return body;
@@ -172,10 +192,14 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
     return api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { refresh(); return r; });
   }
-  function banner(text) {
+  var bannerTimer = null;
+  function banner(text, sticky) {
     var b = document.getElementById('banner');
     b.textContent = text; b.style.display = 'block';
-    setTimeout(function () { b.style.display = 'none'; }, 6000);
+    if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+    // sticky errors (no/bad token) stay up — a blank page with no
+    // explanation is worse than a nagging red bar
+    if (!sticky) bannerTimer = setTimeout(function () { b.style.display = 'none'; }, 6000);
   }
 
   function refresh() {
@@ -205,7 +229,13 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
     var root = document.getElementById('view');
     root.textContent = '';
     hideMenu();
-    if (!state) return;
+    if (!state) {
+      // never a silent blank view: say why there is nothing to show
+      root.appendChild(el('div', { class: 'muted', text: token
+        ? 'loading… (if this persists, the server may be down — restart aperture-ui)'
+        : 'No token in the URL. Open the exact URL printed by aperture-ui — it ends with #t=<token>.' }));
+      return;
+    }
     if (currentView === 'matrix') renderMatrix(root);
     else if (currentView === 'reverse') renderReverse(root);
     else renderCircles(root);
@@ -642,7 +672,8 @@ tr.sep td { border: none; padding: 10px 0 2px; background: var(--bg); color: var
   // ---- boot -------------------------------------------------------------------
 
   if (!token) {
-    banner('No token in the URL. Start the server and open the printed URL (it ends with #t=…).');
+    banner('No token in the URL. Start the server and open the printed URL (it ends with #t=…).', true);
+    render();
   } else {
     refresh().catch(function () {});
   }
