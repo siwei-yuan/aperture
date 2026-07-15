@@ -10,9 +10,12 @@ interface IngestedPayload {
   subject: string[];
   source: Source;
   acquisitionContext: string;
+  acquisitionAudience?: string[];
   topics: string[];
   layers: Layer[];
-  quarantined: boolean;
+  scope?: 'local' | 'global' | 'sealed';
+  /** Pre-scope ledgers carried a boolean instead. */
+  quarantined?: boolean;
 }
 
 /**
@@ -45,16 +48,24 @@ export async function rebuildProjections(
           subject: p.subject,
           source: p.source,
           acquisitionContext: p.acquisitionContext,
+          acquisitionAudience: p.acquisitionAudience ?? [p.source.who],
           topics: p.topics,
           layers: p.layers,
-          quarantined: p.quarantined,
+          scope: p.scope ?? (p.quarantined ? 'local' : 'global'),
         });
         if (opts?.vectors) await opts.vectors.index({ id: p.atomId, layers: p.layers });
         break;
       }
-      case 'atom.approved': {
+      // 'atom.approved' is the pre-scope name for the same owner signature.
+      case 'atom.approved':
+      case 'atom.promoted': {
         const p = event.payload as { atomId: string };
-        store.setQuarantined(p.atomId, false);
+        store.setScope(p.atomId, 'global');
+        break;
+      }
+      case 'atom.sealed': {
+        const p = event.payload as { atomId: string };
+        store.setScope(p.atomId, 'sealed');
         break;
       }
       case 'acl.granted': {

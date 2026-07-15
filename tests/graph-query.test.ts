@@ -79,10 +79,10 @@ describe('gated graph queries (T5.2)', () => {
     ] as Array<[string, number]>) {
       // Allowed entity closure from the ATOM side: entities on layers ≤ ceiling.
       const allowed = new Set<string>();
-      for (const atom of store.listVisible()) {
+      for (const atom of store.listGlobal()) {
         const r = resolutionForAtom(db, viewer, atom);
         for (const layer of atom.layers) {
-          if (layer.level <= r) layer.entities.forEach((e) => allowed.add(e));
+          if (layer.level <= r) layer.entities.forEach((e: string) => allowed.add(e));
         }
       }
 

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { resolutionForAtom } from '../core/rebac.js';
+import { ceilingsForAudience } from '../core/rebac.js';
 import type { AtomStore } from '../core/store.js';
 import { ensureGraphTables } from './fold.js';
 
@@ -60,16 +60,16 @@ export function neighbors(
     ),
   );
 
-  // Ceiling per source atom, memoized; 0 for anything the audience may not see.
+  // Ceiling per source atom, memoized; 0 for anything the audience may not
+  // see. Same adjudication rule as retrieval (scope + ReBAC).
   const ceilingCache = new Map<string, number>();
   const ceilingFor = (atomId: string): number => {
     const cached = ceilingCache.get(atomId);
     if (cached !== undefined) return cached;
     const atom = deps.store.get(atomId);
-    let ceiling = 0;
-    if (atom && !atom.quarantined && req.audience.length > 0) {
-      ceiling = Math.min(...req.audience.map((m) => resolutionForAtom(deps.db, m, atom)));
-    }
+    const ceiling = atom
+      ? (ceilingsForAudience(deps.db, req.audience, [atom]).get(atom.id) ?? 0)
+      : 0;
     ceilingCache.set(atomId, ceiling);
     return ceiling;
   };
@@ -87,8 +87,9 @@ export function neighbors(
     for (const nodeId of frontier) {
       for (const row of edgesTouching.all(nodeId, nodeId) as EdgeRow[]) {
         if (collected.has(row.id)) continue;
-        if (row.quarantined === 1) continue;
         if (!req.includeInvalidated && row.t_invalid !== null) continue;
+        // The atom ceiling is authoritative (scope + ReBAC); the edge flag is
+        // only a denormalized hint and is deliberately not consulted here.
         if (ceilingFor(row.atom_id) < row.min_level) continue;
 
         collected.set(row.id, {

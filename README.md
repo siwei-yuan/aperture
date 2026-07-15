@@ -98,11 +98,13 @@ goes through the same single entrance; there is no second door.
       still failing ─► ledger: atom.rejected (nothing stored)
       │
       ▼
- ⑤  PROVENANCE — who said this?
-      you (owner)      ─► goes live immediately
-      anyone else      ─► quarantined until you approve
-                          (`aperture quarantine` / `approve <id>`)
-      Bob's gossip never silently merges into your profile
+ ⑤  PROVENANCE — who said this, and in which room?
+      you (owner)      ─► global immediately (retrievable everywhere,
+                          layer-gated by your matrix)
+      anyone else      ─► room-local: instantly usable in the room it was
+                          said in (everyone there heard it anyway — no
+                          approval needed), but it NEVER silently merges
+                          into the globally retrievable profile
       │
       ▼
  ⑥  PERSIST                                      ledger: atom.ingested
@@ -139,9 +141,28 @@ goes through the same single entrance; there is no second door.
         disclosure.request lands on the ledger for the owner to review
       │
       ▼
- ④  and the turn itself is captured — Bob's question goes back
-      through the write path above (and, being Bob's words, quarantines)
+ ④  and the turn itself is captured — Bob's words go back through the
+      write path above and land room-local to his conversation
 ```
+
+### Promotion: the only approval, and it is demand-driven
+
+Room-local memory leaves its room exactly one way: an owner-signed
+promotion. You are never interrupted at write time. When some OTHER
+conversation's retrieval would have used a room-local atom, the atom is
+suggested to you once (`promotion.suggested` on the ledger), with its
+coarsest layer only:
+
+```text
+another conversation wanted a room-local memory:
+"bob has news to share"
+/aperture promote 8195139e · /aperture seal 8195139e · ignoring keeps it room-local
+```
+
+Promote it (global, layer-gated by your matrix), seal it (visible nowhere —
+how you reject poison someone tried to plant about you), or ignore it
+(stays room-local forever). Approval collapses from "every message" to
+"only the facts other rooms actually ask about".
 
 Every step in both flows is an event on one append-only, hash-chained ledger. The atom
 store, ACL tuples, vector index, and knowledge graph are *projections* — deletable and
@@ -171,7 +192,7 @@ Add to `~/.openclaw/openclaw.json`:
         config: {
           dbPath: "~/.aperture/aperture.db",
           ownerId: "person:owner",
-          // your own platform ids, so YOUR messages aren't quarantined:
+          // your own platform ids, so YOUR messages land global, not room-local:
           ownerExternalIds: { telegram: "123456789" },
           // distillation LLM — any OpenAI-compatible endpoint:
           llm:   { baseUrl: "https://api.openai.com/v1", apiKey: "sk-...", model: "gpt-5-mini" },
@@ -271,8 +292,9 @@ defense and keep the others — the layers are independent.
 ## Owner CLI
 
 ```bash
-aperture --db <path> quarantine                 # list atoms awaiting approval
-aperture --db <path> approve <atomId>           # release from quarantine
+aperture --db <path> pending                    # list room-local atoms
+aperture --db <path> promote <atomId>           # lift into the global profile
+aperture --db <path> seal <atomId>              # reject (visible nowhere, ledgered)
 aperture --db <path> grant <obj> viewer <subj> <0-4>
 aperture --db <path> revoke <obj> viewer <subj>
 aperture --db <path> check person:bob topic:health
@@ -280,12 +302,20 @@ aperture --db <path> disclosures --viewer person:bob   # what Bob has learned
 aperture --db <path> verify                     # verify the ledger hash chain
 ```
 
+The same verbs are available in chat when the OpenClaw adapter is installed
+(`/aperture pending` etc.) — commands are routed by the host around the model,
+so the model can neither see nor forge an owner signature.
+
 ## Design commitments
 
 - **Sessions are partitioned by audience.** Each DM peer and each group chat is an
   isolated session; they share state only through the gated memory store. The context
   window is a single trust domain, so the isolation unit is *who can see it*, not *who
   sent it*.
+- **Provenance and disclosure rights are separate dimensions.** Where knowledge came
+  from (the room, frozen at write time) and who may see it now (owner-signed grants,
+  evaluated at read time) never collapse into each other. Room-local content flows
+  freely where no new disclosure happens; everything beyond that is policy.
 - **Classification happens at write time** (contextual integrity). Provenance, the
   acquisition audience, and the ladder are frozen artifacts, so every later disclosure
   decision is deterministic and replayable — not a fresh guess at answer time.
@@ -306,9 +336,10 @@ npm run demo:dorm   # four roommates, four group chats, gossip that cannot leak
 ```
 
 The **dorm demo** simulates the hard case directly: three roommates gossip about the
-fourth in the one group chat she isn't in. Sixteen inline assertions prove the gossip is
-available where everyone already knows it, structurally absent from every room she is
-in, blocked at egress even if the model hallucinates it, and fully auditable afterwards.
+fourth in the one group chat she isn't in. Nineteen inline assertions prove the gossip
+is available where everyone already heard it (room-local by provenance — zero approvals
+involved), structurally absent from every room she is in, blocked at egress even if the
+model hallucinates it, and fully auditable afterwards.
 
 ## Status
 
@@ -324,7 +355,7 @@ it with real secrets:
 
 | Milestone | Delivers |
 | --- | --- |
-| M0 | Memory atoms · ladder entailment invariant · hash-chained ledger · quarantine |
+| M0 | Memory atoms · ladder entailment invariant · hash-chained ledger · room-scoped provenance |
 | M1 | Resolution-typed ReBAC: ledger-projected tuples · (max, min) evaluator |
 | M2 | Audience sessions · task scope · layered retrieval |
 | M3 | Ingress gates + LLM ladder generator · MCP server · OpenClaw adapter (live-validated) |

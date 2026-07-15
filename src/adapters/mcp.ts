@@ -34,7 +34,7 @@ export function createApertureMcpServer(opts: ApertureMcpOptions): McpServer {
   });
   // Provenance is also fixed at launch: content arriving through this server
   // is attributed to the audience, never to the owner — so non-owner content
-  // always lands in quarantine regardless of what the model claims.
+  // always lands room-local regardless of what the model claims.
   const speaker = opts.audience[0] ?? 'person:unknown';
 
   const server = new McpServer({ name: 'aperture', version: '0.1.0' });
@@ -67,7 +67,7 @@ export function createApertureMcpServer(opts: ApertureMcpOptions): McpServer {
     'aperture_store',
     {
       description:
-        'Store an episode into memory. Non-owner content is quarantined until the owner approves.',
+        'Store an episode into memory. Non-owner content stays room-local until the owner promotes it.',
       inputSchema: {
         content: z.string().describe('The episode content to remember'),
         topics: z.array(z.string()).max(3).optional().describe('Topic tags (default: general)'),
@@ -82,6 +82,7 @@ export function createApertureMcpServer(opts: ApertureMcpOptions): McpServer {
           topics: topics ?? ['general'],
           source: { who: speaker, channel: opts.channel, ts: Date.now() },
           acquisitionContext: opts.channel,
+          acquisitionAudience: opts.audience,
         },
       );
 
@@ -89,7 +90,7 @@ export function createApertureMcpServer(opts: ApertureMcpOptions): McpServer {
       if ('gated' in result) text = `not distilled (${result.gated}: ${result.detail})`;
       else if (!result.ingest.ok) text = 'rejected: ladder violated the entailment invariant';
       else if ('skipped' in result.ingest) text = `skipped (${result.ingest.skipped})`;
-      else text = `stored${result.ingest.atom.quarantined ? ' (quarantined until owner approval)' : ''}`;
+      else text = `stored${result.ingest.atom.scope === 'local' ? ' (room-local until the owner promotes it)' : ''}`;
       return { content: [{ type: 'text', text }] };
     },
   );

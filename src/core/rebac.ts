@@ -177,3 +177,42 @@ export function lookupVisibleLayers(
   }
   return out;
 }
+
+/**
+ * Effective per-atom ceilings for a whole room. The single adjudication rule
+ * shared by retrieval and egress:
+ *
+ * - `sealed` — ceiling 0 everywhere.
+ * - `local` — full resolution iff every audience member was present at
+ *   acquisition (no new disclosure: they already heard the raw thing);
+ *   otherwise 0. ReBAC does not apply — presence beats policy for one's
+ *   own room.
+ * - `global` — min over members of the widest-path ReBAC resolution;
+ *   an empty audience resolves to 0 (deny by default).
+ *
+ * Atoms with ceiling 0 are omitted from the map.
+ */
+export function ceilingsForAudience(
+  db: Database.Database,
+  audience: string[],
+  atoms: Array<Pick<MemoryAtom, 'id' | 'topics' | 'scope' | 'acquisitionAudience' | 'layers'>>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (audience.length === 0) return out;
+
+  const globals = atoms.filter((a) => a.scope === 'global');
+  const perMember = audience.map((m) => lookupVisibleLayers(db, m, globals));
+  for (const atom of globals) {
+    let min = Infinity;
+    for (const member of perMember) min = Math.min(min, member.get(atom.id) ?? 0);
+    if (min > 0 && Number.isFinite(min)) out.set(atom.id, min);
+  }
+
+  for (const atom of atoms) {
+    if (atom.scope !== 'local') continue;
+    const present = new Set(atom.acquisitionAudience);
+    if (audience.every((m) => present.has(m))) out.set(atom.id, atom.layers.length);
+  }
+
+  return out;
+}

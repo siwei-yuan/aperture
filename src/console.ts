@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3';
-import type { MemoryAtom } from './core/atom.js';
-import { approveAtom } from './core/ingest.js';
+import { promoteAtom, sealAtom } from './core/ingest.js';
 import type { Ledger } from './core/ledger.js';
 import { AclStore } from './core/rebac.js';
+import type { PromotionSuggestion } from './core/retrieve.js';
 import type { AtomStore } from './core/store.js';
 import { peekIdentity, resolveIdentity } from './session/router.js';
 
@@ -31,8 +31,9 @@ export type ConsoleResult =
 const NOT_HANDLED: ConsoleResult = { handled: false };
 
 const HELP = `aperture owner console:
-/aperture quarantine — list atoms awaiting approval
-/aperture approve <id> — release an atom from quarantine
+/aperture pending — list room-local atoms (usable in their own room; promotion makes them global)
+/aperture promote <id> — lift an atom into the globally retrievable profile
+/aperture seal <id> — reject an atom (visible nowhere, stays on the ledger)
 /aperture grant <who> <tier> — add <who> to a tier (who: platform:id or person:id-prefix)
 /aperture revoke <who> <tier> — remove <who> from a tier`;
 
@@ -41,13 +42,15 @@ export function shortId(atomId: string): string {
   return atomId.slice(0, 8);
 }
 
-/** Push text for a freshly quarantined atom. Coarsest layer only — the notice itself is a disclosure. */
-export function quarantineNotice(atom: MemoryAtom): string {
-  const summary = atom.layers[0]?.text ?? '(no summary)';
+/**
+ * Push text when another room wanted a local atom (demand-driven promotion).
+ * Coarsest layer only — the notice itself is a disclosure.
+ */
+export function promotionNotice(s: PromotionSuggestion): string {
   return (
-    `🔒 quarantined from ${atom.source.who} (${atom.source.channel}):\n` +
-    `"${summary}"\n` +
-    `/aperture approve ${shortId(atom.id)} to release · ignoring keeps it sealed`
+    `🔓 another conversation wanted a room-local memory:\n` +
+    `"${s.summary}"\n` +
+    `/aperture promote ${shortId(s.atomId)} to share it · /aperture seal ${shortId(s.atomId)} to reject · ignoring keeps it room-local`
   );
 }
 
@@ -110,27 +113,35 @@ export function handleOwnerCommand(
     default:
       return { handled: true, reply: HELP };
 
+    case 'pending':
     case 'quarantine': {
-      const atoms = deps.store.listQuarantined();
-      if (atoms.length === 0) return { handled: true, reply: 'quarantine is empty' };
+      const atoms = deps.store.listLocal();
+      if (atoms.length === 0) return { handled: true, reply: 'no room-local atoms' };
       const lines = atoms.map(
-        (a) => `/aperture approve ${shortId(a.id)} · ${a.source.who} · "${a.layers[0]?.text ?? ''}"`,
+        (a) => `/aperture promote ${shortId(a.id)} · ${a.source.who} · "${a.layers[0]?.text ?? ''}"`,
       );
       return { handled: true, reply: lines.join('\n') };
     }
 
-    case 'approve': {
+    case 'promote':
+    case 'approve':
+    case 'seal': {
+      const verb = command === 'seal' ? 'seal' : 'promote';
       const prefix = args[0];
-      if (!prefix) return { handled: true, reply: 'usage: /aperture approve <id> (see /aperture quarantine)' };
-      const matches = deps.store.listQuarantined().filter((a) => a.id.startsWith(prefix));
-      if (matches.length === 0) return { handled: true, reply: `no quarantined atom matches "${prefix}"` };
+      if (!prefix) return { handled: true, reply: `usage: /aperture ${verb} <id> (see /aperture pending)` };
+      const matches = deps.store.listLocal().filter((a) => a.id.startsWith(prefix));
+      if (matches.length === 0) return { handled: true, reply: `no room-local atom matches "${prefix}"` };
       if (matches.length > 1) return { handled: true, reply: `"${prefix}" is ambiguous (${matches.length} matches)` };
-      approveAtom(
+      const act = verb === 'seal' ? sealAtom : promoteAtom;
+      act(
         { store: deps.store, ledger: deps.ledger, ownerId: deps.ownerId },
         matches[0]!.id,
         deps.ownerId,
       );
-      return { handled: true, reply: `approved: "${matches[0]!.layers[0]?.text ?? matches[0]!.id}"` };
+      return {
+        handled: true,
+        reply: `${verb === 'seal' ? 'sealed' : 'promoted'}: "${matches[0]!.layers[0]?.text ?? matches[0]!.id}"`,
+      };
     }
 
     case 'grant':

@@ -1,7 +1,7 @@
 {
   "id": "aperture",
   "name": "Aperture",
-  "description": "Disclosure-control memory: resolution-typed retrieval, quarantined ingest, append-only disclosure ledger.",
+  "description": "Disclosure-control memory: resolution-typed retrieval, room-scoped ingest, append-only disclosure ledger.",
   "version": "0.1.0",
   "kind": "memory",
   "activation": {
@@ -65,7 +65,7 @@
     },
     "ownerExternalIds": {
       "label": "Owner external ids",
-      "help": "platform → the owner's own external id, so their messages are not quarantined."
+      "help": "platform → the owner's own external id, so their messages land global, not room-local."
     }
   }
 }

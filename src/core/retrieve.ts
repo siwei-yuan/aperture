@@ -3,7 +3,7 @@ import { getSession } from '../session/router.js';
 import { applyMosaicBudget, type MosaicConfig } from './disclosure-profile.js';
 import type { VectorStore } from './embed.js';
 import type { Ledger } from './ledger.js';
-import { lookupVisibleLayers } from './rebac.js';
+import { ceilingsForAudience } from './rebac.js';
 import type { AtomStore } from './store.js';
 
 export interface RetrieveDeps {
@@ -33,35 +33,39 @@ export interface RetrievedItem {
   score: number;
 }
 
+/** A local atom that would have ranked for this query but is scope-blocked. */
+export interface PromotionSuggestion {
+  atomId: string;
+  /** Coarsest-layer summary — the suggestion is itself a disclosure to the owner's channel. */
+  summary: string;
+  score: number;
+}
+
 /**
  * The main battlefield: what must not be said never enters the context.
  *
- * Order: visible atoms → scope filter → per-member ReBAC lookup, min-combined
- * across the audience → exact KNN inside the permitted partition → one item
- * per atom at its finest permitted layer (coarser layers are entailed by it)
- * → adjudication on the ledger.
+ * Order: retrievable atoms → topic-scope filter → per-atom ceiling
+ * (local: presence at acquisition; global: min-combined ReBAC) → exact KNN
+ * inside the permitted partition → one item per atom at its finest permitted
+ * layer (coarser layers are entailed by it) → adjudication on the ledger.
+ *
+ * Local atoms blocked by scope but relevant enough to have ranked come back
+ * as promotion suggestions (demand-driven review, each suggested at most
+ * once — `promotion.suggested` on the ledger is the dedupe record).
  */
 export async function retrieve(
   deps: RetrieveDeps,
   req: RetrieveRequest,
-): Promise<{ items: RetrievedItem[] }> {
+): Promise<{ items: RetrievedItem[]; suggestions: PromotionSuggestion[] }> {
   const k = req.k ?? 5;
-  const visible = deps.store.listVisible();
+  const retrievable = deps.store.listRetrievable();
 
   const scoped =
     req.scopeTopics == null
-      ? visible
-      : visible.filter((a) => a.topics.some((t) => req.scopeTopics!.includes(t)));
+      ? retrievable
+      : retrievable.filter((a) => a.topics.some((t) => req.scopeTopics!.includes(t)));
 
-  const combined = new Map<string, number>();
-  if (req.audience.length > 0) {
-    const perMember = req.audience.map((m) => lookupVisibleLayers(deps.db, m, scoped));
-    for (const atom of scoped) {
-      let min = Infinity;
-      for (const member of perMember) min = Math.min(min, member.get(atom.id) ?? 0);
-      if (min > 0 && Number.isFinite(min)) combined.set(atom.id, min);
-    }
-  }
+  const combined = ceilingsForAudience(deps.db, req.audience, scoped);
 
   const queryVec = await deps.vectors.embedQuery(req.query);
   // Over-fetch so per-atom dedupe still fills k items.
@@ -125,14 +129,72 @@ export async function retrieve(
     now,
   );
 
-  return { items };
+  const suggestions = suggestPromotions(deps, {
+    scoped,
+    combined,
+    queryVec,
+    items,
+    k,
+    audience: req.audience,
+    now,
+  });
+
+  return { items, suggestions };
+}
+
+/**
+ * Demand-driven promotion: a scope-blocked local atom is suggested iff it
+ * would have made the injected set on relevance alone. Each atom is
+ * suggested at most once, ever — the ledger event is the dedupe record.
+ */
+function suggestPromotions(
+  deps: RetrieveDeps,
+  args: {
+    scoped: ReturnType<AtomStore['listRetrievable']>;
+    combined: Map<string, number>;
+    queryVec: Float32Array;
+    items: RetrievedItem[];
+    k: number;
+    audience: string[];
+    now: number;
+  },
+): PromotionSuggestion[] {
+  const blocked = args.scoped.filter((a) => a.scope === 'local' && !args.combined.has(a.id));
+  if (blocked.length === 0 || args.audience.length === 0) return [];
+
+  // Would it have ranked? If the injected set is full, beat its weakest
+  // member; if the context came back short, any relevance would have ranked.
+  const bar = args.items.length >= args.k ? args.items[args.items.length - 1]!.score : -Infinity;
+
+  const alreadySuggested = new Set<string>();
+  for (const event of deps.ledger.events()) {
+    if (event.type === 'promotion.suggested') {
+      alreadySuggested.add((event.payload as { atomId: string }).atomId);
+    }
+  }
+
+  const fullCeilings = new Map(blocked.map((a) => [a.id, a.layers.length]));
+  const suggestions: PromotionSuggestion[] = [];
+  for (const hit of deps.vectors.search(args.queryVec, fullCeilings, 3)) {
+    if (hit.score < bar) continue;
+    const atom = blocked.find((a) => a.id === hit.atomId);
+    if (!atom || alreadySuggested.has(atom.id)) continue;
+    alreadySuggested.add(atom.id);
+    suggestions.push({ atomId: atom.id, summary: atom.layers[0]?.text ?? '', score: hit.score });
+    deps.ledger.append(
+      'promotion.suggested',
+      { atomId: atom.id, audience: args.audience, score: Number(hit.score.toFixed(4)) },
+      args.now,
+    );
+  }
+  return suggestions;
 }
 
 /** Session-aware variant: audience and TBAC scope come from the session row. */
 export async function retrieveForSession(
   deps: RetrieveDeps,
   req: { sessionId: string; query: string; k?: number },
-): Promise<{ items: RetrievedItem[] }> {
+): Promise<{ items: RetrievedItem[]; suggestions: PromotionSuggestion[] }> {
   const session = getSession(deps.db, req.sessionId);
   if (!session) throw new Error(`unknown session "${req.sessionId}"`);
   return retrieve(deps, {

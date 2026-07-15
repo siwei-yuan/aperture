@@ -50,7 +50,15 @@ interface IngestedPayload {
   atomId: string;
   source: { who: string; channel: string; ts: number };
   layers: Layer[];
-  quarantined: boolean;
+  scope?: 'local' | 'global' | 'sealed';
+  /** Pre-scope ledgers carried a boolean instead. */
+  quarantined?: boolean;
+}
+
+/** Edge flag: 1 = the source atom is not globally visible (local or sealed). */
+function nonGlobal(p: IngestedPayload): 0 | 1 {
+  const scope = p.scope ?? (p.quarantined ? 'local' : 'global');
+  return scope === 'global' ? 0 : 1;
 }
 
 export function ensureGraphTables(db: Database.Database): void {
@@ -197,15 +205,23 @@ export async function foldAtoms(deps: FoldDeps): Promise<void> {
               p.atomId,
               minLevel,
               p.source.ts,
-              p.quarantined ? 1 : 0,
+              nonGlobal(p),
             );
         }
         break;
       }
 
-      case 'atom.approved': {
+      // 'atom.approved' is the pre-scope name for the same owner signature.
+      case 'atom.approved':
+      case 'atom.promoted': {
         const p = event.payload as { atomId: string };
         deps.db.prepare('UPDATE edges SET quarantined = 0 WHERE atom_id = ?').run(p.atomId);
+        break;
+      }
+
+      case 'atom.sealed': {
+        const p = event.payload as { atomId: string };
+        deps.db.prepare('UPDATE edges SET quarantined = 1 WHERE atom_id = ?').run(p.atomId);
         break;
       }
 

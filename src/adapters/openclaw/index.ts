@@ -14,27 +14,27 @@ import Database from 'better-sqlite3';
 import { buildJsonPluginConfigSchema, definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from 'typebox';
-import { handleOwnerCommand, newContactNotice, noteContact, quarantineNotice } from '../../console.js';
+import { handleOwnerCommand, newContactNotice, noteContact, promotionNotice } from '../../console.js';
 import { hashEmbedder, httpEmbedder, VectorStore, type Embedder } from '../../core/embed.js';
 import { checkEgress } from '../../core/egress.js';
 import { IngestPipeline, type LayerGenerator } from '../../core/ingest.js';
 import { Ledger } from '../../core/ledger.js';
 import { retrieveForSession } from '../../core/retrieve.js';
 import { AtomStore } from '../../core/store.js';
-import { capture, type CaptureResult } from '../../gen/capture.js';
+import { capture } from '../../gen/capture.js';
 import { LlmLayerGenerator, type LlmClient } from '../../gen/llm-generator.js';
 import { linkIdentity, resolveIdentity, sessionFor } from '../../session/router.js';
 
 export interface ApertureDeps {
   db: Database.Database;
   ownerId: string;
-  /** platform → the owner's own external id, so their messages are not quarantined. */
+  /** platform → the owner's own external id, so their messages land global, not room-local. */
   ownerExternalIds?: Record<string, string>;
   generator: LayerGenerator;
   embedder?: Embedder;
   /** Default topic tags for captured episodes. */
   topics?: string[];
-  /** Proactive push to the owner (quarantine / new-contact notices). Absent = no pushes. */
+  /** Proactive push to the owner (promotion / new-contact notices). Absent = no pushes. */
   notifyOwner?: (text: string) => void | Promise<void>;
 }
 
@@ -115,6 +115,9 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
       peerExternalIds: [peer],
     });
     const res = await retrieveForSession(membrane, { sessionId: session.id, query: event.prompt });
+    // Demand-driven promotion: another room wanted a local atom — the owner
+    // decides, once, out of band. This is the ONLY approval touchpoint.
+    for (const suggestion of res.suggestions) notify(promotionNotice(suggestion));
     if (res.items.length === 0) return { prependContext: EMPTY_RECALL };
     return {
       prependContext: `<aperture-memory>\n${res.items.map((i) => `[L${i.level}] ${i.text}`).join('\n')}\n</aperture-memory>`,
@@ -126,7 +129,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
   // One namespaced root ("/aperture ...") avoids reserved-name collisions.
   api.registerCommand({
     name: 'aperture',
-    description: 'Aperture owner console: quarantine review, approvals, tier grants',
+    description: 'Aperture owner console: pending review, promotions, tier grants',
     acceptsArgs: true,
     handler: (ctx) => {
       const platform = ctx.channelId ?? ctx.channel;
@@ -143,27 +146,38 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
   // Distillation runs AFTER the turn and must not block it (design: async
   // distillation), so the hook fires capture detached and returns at once —
   // a slow local model can never time the turn out.
+  //
+  // Non-owner content lands room-local: immediately usable in its own room,
+  // globally retrievable only after an owner-signed promotion. Writing is
+  // silent by design — the owner is consulted on demand (see recall hook),
+  // not on every message.
   api.on('agent_end', async (event, ctx) => {
     const content = transcriptOf(event.messages);
     if (!content) return;
     const platform = ctx.messageProvider ?? ctx.channel;
     // Conservative provenance: a channel turn belongs to its (possibly
-    // unknown) sender — so non-owner content quarantines. Only sender-less
-    // local runs are the owner's own.
+    // unknown) sender. Only sender-less local runs are the owner's own.
     const externalId = ctx.senderId ?? ctx.channelId ?? ctx.chatId ?? 'unknown';
     const who = platform ? seeContact(platform, externalId) : ownerId;
     const channel = `${platform ?? 'openclaw'}:${ctx.channelId ?? ctx.chatId ?? ctx.sessionKey ?? 'unknown'}`;
+    const session = platform
+      ? sessionFor(db, {
+          platform,
+          channel: ctx.channelId ?? ctx.chatId ?? ctx.sessionKey ?? 'unknown',
+          peerExternalIds: [externalId],
+        })
+      : undefined;
     void capture(
       { db, ledger, pipeline },
-      { content, subject: [who], topics, source: { who, channel, ts: Date.now() }, acquisitionContext: channel },
-    )
-      .then((result: CaptureResult) => {
-        const ingest = 'ingest' in result ? result.ingest : undefined;
-        if (ingest?.ok && 'atom' in ingest && ingest.atom.quarantined) {
-          notify(quarantineNotice(ingest.atom));
-        }
-      })
-      .catch((err) => console.error('[aperture] capture failed:', err));
+      {
+        content,
+        subject: [who],
+        topics,
+        source: { who, channel, ts: Date.now() },
+        acquisitionContext: channel,
+        acquisitionAudience: session?.audience ?? [who],
+      },
+    ).catch((err) => console.error('[aperture] capture failed:', err));
   });
 
   // egress: second line of defense over the finished outbound reply.
@@ -207,10 +221,11 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
         {
           name: 'aperture_store',
           label: 'Aperture store',
-          description: 'Remember something from this conversation (non-owner content is quarantined).',
+          description: 'Remember something from this conversation (non-owner content stays room-local until promoted).',
           parameters: Type.Object({ content: Type.String({ description: 'The episode to remember' }) }),
           execute: async (_id, params) => {
             const who = resolveIdentity(db, platform, peer ?? 'unknown');
+            const session = sessionFor(db, { platform, channel, peerExternalIds: peer ? [peer] : [] });
             const result = await capture(
               { db, ledger, pipeline },
               {
@@ -219,12 +234,13 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
                 topics,
                 source: { who, channel: `${platform}:${channel}`, ts: Date.now() },
                 acquisitionContext: `${platform}:${channel}`,
+                acquisitionAudience: session.audience,
               },
             );
             if ('gated' in result) return text(`not distilled (${result.gated})`);
             if (!result.ingest.ok) return text('rejected (entailment invariant)');
             if ('skipped' in result.ingest) return text(`skipped (${result.ingest.skipped})`);
-            return text(result.ingest.atom.quarantined ? 'stored (quarantined until owner approval)' : 'stored');
+            return text(result.ingest.atom.scope === 'local' ? 'stored (room-local until the owner promotes it)' : 'stored');
           },
         },
       ];
@@ -326,7 +342,7 @@ export default definePluginEntry({
   id: 'aperture',
   name: 'Aperture',
   description:
-    'Disclosure-control memory: resolution-typed retrieval, quarantined ingest, append-only disclosure ledger.',
+    'Disclosure-control memory: resolution-typed retrieval, room-scoped ingest, append-only disclosure ledger.',
   configSchema: () => buildJsonPluginConfigSchema(CONFIG_SCHEMA),
   register(api) {
     const cfg = (api.pluginConfig ?? {}) as {

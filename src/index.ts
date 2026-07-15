@@ -3,7 +3,7 @@
  */
 
 // Memory atoms and the ladder invariant
-export type { Layer, MemoryAtom, Source } from './core/atom.js';
+export type { AtomScope, Layer, MemoryAtom, Source } from './core/atom.js';
 export { MAX_LAYERS, validateLadder } from './core/entail.js';
 export type { LadderCheck, LadderViolation } from './core/entail.js';
 
@@ -18,11 +18,11 @@ export { cosine, hashEmbedder, httpEmbedder, VectorStore } from './core/embed.js
 export type { Embedder, KnnHit } from './core/embed.js';
 
 // Resolution-typed ReBAC
-export { AclStore, check, lookupVisibleLayers, resolutionForAtom } from './core/rebac.js';
+export { AclStore, ceilingsForAudience, check, lookupVisibleLayers, resolutionForAtom } from './core/rebac.js';
 export type { RelationTuple, TupleRef } from './core/rebac.js';
 
 // Ingest (membrane, inbound)
-export { approveAtom, IngestPipeline } from './core/ingest.js';
+export { IngestPipeline, promoteAtom, sealAtom } from './core/ingest.js';
 export type {
   IngestResult,
   LayerDraft,
@@ -40,7 +40,7 @@ export type { LlmClient } from './gen/llm-generator.js';
 
 // Retrieval (adjudication)
 export { retrieve, retrieveForSession } from './core/retrieve.js';
-export type { RetrieveDeps, RetrievedItem, RetrieveRequest } from './core/retrieve.js';
+export type { PromotionSuggestion, RetrieveDeps, RetrievedItem, RetrieveRequest } from './core/retrieve.js';
 
 // Mosaic tracking (cumulative disclosure projection + budgets)
 export { applyMosaicBudget, disclosureProfile } from './core/disclosure-profile.js';
@@ -65,7 +65,7 @@ export {
   handleOwnerCommand,
   newContactNotice,
   noteContact,
-  quarantineNotice,
+  promotionNotice,
   shortId,
 } from './console.js';
 export type { ConsoleDeps, ConsoleResult } from './console.js';

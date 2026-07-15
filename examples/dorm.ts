@@ -12,16 +12,18 @@
  *
  * Each person has her own aperture instance (own membrane, ledger, memory).
  * Story: in g1 the three of them gossip about Dora; then five probes prove the
- * gossip can never surface for any audience that includes Dora — excluded
- * structurally at retrieval, backstopped at egress, auditable on the ledger.
- * Every scene has inline assertions; any leak exits with a non-zero code.
+ * gossip can never surface for any audience that includes Dora — room-local by
+ * provenance (usable where everyone already heard it, nowhere else),
+ * backstopped at egress, auditable on the ledger. Every scene has inline
+ * assertions; any leak exits with a non-zero code.
  */
 import Database from 'better-sqlite3';
 import {
   AclStore,
-  approveAtom,
   AtomStore,
   capture,
+  promoteAtom,
+  sealAtom,
   checkEgress,
   hashEmbedder,
   IngestPipeline,
@@ -167,9 +169,8 @@ for (const g of ['Anna', 'Cara', 'Dora'] as Girl[]) {
   bella.acl.grant({ object: 'tier:roommate', relation: 'member', subject: P(g), resolution: 4 });
 }
 bella.acl.grant({ object: 'topic:daily', relation: 'viewer', subject: 'tier:roommate#member', resolution: 3 });
-bella.acl.grant({ object: 'topic:gossip-dora', relation: 'viewer', subject: P('Anna'), resolution: 4 });
-bella.acl.grant({ object: 'topic:gossip-dora', relation: 'viewer', subject: P('Cara'), resolution: 4 });
-console.log(`  Bella's matrix: daily -> roommates L3; gossip-dora -> only Anna & Cara L4; Dora -> default deny (0)`);
+console.log(`  Bella's matrix: daily -> roommates L3; unknowns -> default deny (0)`);
+console.log(`  Note: NO grant is needed for the gossip — room-local scope handles it by provenance`);
 
 // ---------------------------------------------------------------------------
 // A day of messages: each message is heard only by agents in that group
@@ -203,6 +204,7 @@ for (let i = 0; i < timeline.length; i++) {
         topics: meta?.topics ?? ['daily'],
         source: { who: P(msg.speaker), channel: `dorm:group:${msg.group}`, ts: T0 + i * 60_000 },
         acquisitionContext: `dorm:group:${msg.group}`,
+        acquisitionAudience: members.map(P), // the room, frozen on the atom
       },
     );
     if (listener === 'Bella') {
@@ -211,7 +213,7 @@ for (let i = 0; i < timeline.length; i++) {
       else if ('skipped' in result.ingest) notes.push(`skip (${result.ingest.skipped})`);
       else {
         atomIds.set(msg.text, result.ingest.atom.id);
-        notes.push(result.ingest.atom.quarantined ? 'stored -> quarantine' : 'stored (owner direct)');
+        notes.push(result.ingest.atom.scope === 'local' ? 'stored -> room-local' : 'stored (owner direct, global)');
       }
     }
   }
@@ -221,29 +223,31 @@ for (let i = 0; i < timeline.length; i++) {
 }
 
 assert(
-  agents.get('Bella')!.store.listVisible().length + agents.get('Bella')!.store.listQuarantined().length === 4,
-  "Bella's membrane absorbed only the 4 distillable messages she was present for (g3 is none of her business)",
+  agents.get('Bella')!.store.listLocal().length === 4,
+  "Bella's membrane absorbed only the 4 distillable messages she was present for (g3 is none of her business), all room-local",
 );
 
 // ---------------------------------------------------------------------------
-// Bella reviews quarantine: approve what she truly heard, withhold the poison
+// Bella reviews her room-local atoms: promote the useful, seal the poison,
+// and deliberately leave the gossip room-local — provenance handles it.
 // ---------------------------------------------------------------------------
 
-section('Bella reviews quarantine (anti-poisoning gate)');
+section('Bella reviews room-local atoms (promotion is the ONLY gate that needs her)');
 const bDeps = { db: bella.db, ledger: bella.ledger, store: bella.store, vectors: bella.vectors };
+const bOwner = { store: bella.store, ledger: bella.ledger, ownerId: P('Bella') };
 
 for (const text of [
-  'Dora was on the phone till 2am again last night, so noisy',
   'Want to go hiking together on Saturday?',
   'I got new milk tea coupons, want to split an order?',
 ]) {
-  const id = atomIds.get(text)!;
-  const atom = bella.store.get(id)!;
-  if (atom.quarantined) approveAtom({ store: bella.store, ledger: bella.ledger, ownerId: P('Bella') }, id, P('Bella'));
-  console.log(`  approved: "${text}"`);
+  promoteAtom(bOwner, atomIds.get(text)!, P('Bella'));
+  console.log(`  promoted to global: "${text}" (worth answering with anywhere, layer-gated by the matrix)`);
 }
-console.log(`  NOT approved: "Bella said she would give me a spare dorm key" (Dora's one-sided claim, stays quarantined)`);
-assert(bella.store.listQuarantined().length === 1, 'the poison claim is still held in quarantine');
+sealAtom(bOwner, atomIds.get('Bella said she would give me a spare dorm key')!, P('Bella'));
+console.log(`  sealed: "Bella said she would give me a spare dorm key" (Dora's one-sided claim — visible nowhere, kept on the ledger)`);
+console.log(`  untouched: the gossip stays room-local — no signature needed for where it already lives`);
+assert(bella.store.listLocal().length === 1, 'only the gossip remains room-local');
+assert(bella.store.listGlobal().length === 2, 'the two daily facts are global now');
 
 const gossipId = atomIds.get('Dora was on the phone till 2am again last night, so noisy')!;
 
@@ -256,7 +260,7 @@ section('Probe A: in g1 (no Dora), Cara asks Bella\'s agent about the gossip');
   const s = sessionFor(bella.db, { platform: 'dorm', channel: 'group:g1', peerExternalIds: ['Anna', 'Cara'] });
   const res = await retrieve(bDeps, { audience: s.audience, query: 'dora schedule laundry what they said', k: 5 });
   const hit = res.items.find((i) => i.atomId === gossipId);
-  assert(hit !== undefined && hit.level === 4, 'gossip is available where everyone present already knows it, at full L4');
+  assert(hit !== undefined && hit.level === 4, 'gossip surfaces where everyone present already heard it, at full L4 — zero approvals involved');
   console.log(`    context got: L${hit!.level} "${hit!.text}"`);
 }
 
@@ -264,7 +268,7 @@ section('Probe B: in g2 (Dora present), Dora asks "anything new in the dorm late
 {
   const s = sessionFor(bella.db, { platform: 'dorm', channel: 'group:g2', peerExternalIds: ['Anna', 'Dora'] });
   const res = await retrieve(bDeps, { audience: s.audience, query: 'dorm lately new gossip dora schedule laundry', k: 10 });
-  assert(!res.items.some((i) => i.atomId === gossipId), 'audience includes Dora -> min-combine to 0, gossip never enters context');
+  assert(!res.items.some((i) => i.atomId === gossipId), 'audience includes Dora -> not a subset of the acquisition room, gossip never enters context');
   assert(res.items.every((i) => i.level <= 3), 'only daily atoms can enter, and never above L3');
   console.log(`    context got: ${res.items.map((i) => `L${i.level} "${i.text}"`).join('; ') || '(none)'}`);
 }
@@ -293,10 +297,12 @@ section('Probe D: suppose the model is compromised — the egress checker backst
   assert(benign.verdict === 'pass', 'a normal reply passes silently, no false positive');
 }
 
-section('Probe E: the poison claim is invisible to every retrieval');
+section('Probe E: the sealed poison claim is invisible to every retrieval — including its own room');
 {
-  const res = await retrieve(bDeps, { audience: [P('Anna')], query: 'spare key who promised Bella agreed', k: 10 });
-  assert(res.items.every((i) => !i.text.toLowerCase().includes('key')), 'without Bella\'s approval, the "key" claim appears in no one\'s context');
+  const anna = await retrieve(bDeps, { audience: [P('Anna')], query: 'spare key who promised Bella agreed', k: 10 });
+  assert(anna.items.every((i) => !i.text.toLowerCase().includes('key')), 'the sealed "key" claim appears in no one\'s context');
+  const doraRoom = await retrieve(bDeps, { audience: [P('Anna'), P('Dora')], query: 'spare key promised', k: 10 });
+  assert(doraRoom.items.every((i) => !i.text.toLowerCase().includes('key')), 'sealing beats even the acquisition room (unlike room-local)');
 }
 
 // ---------------------------------------------------------------------------
@@ -319,4 +325,4 @@ section('Final audit: the ledger');
   console.log(`    ${disclosures} disclosure adjudications, ${escalations} egress escalation(s), all on the ledger`);
 }
 
-console.log(`\nAll ${checks} assertions passed. Gossip stops at g1, poison stops at quarantine, history stops at the ledger.\n`);
+console.log(`\nAll ${checks} assertions passed. Gossip stops at its room, poison stops at the seal, history stops at the ledger.\n`);

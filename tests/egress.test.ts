@@ -24,7 +24,8 @@ const biliAtom: MemoryAtom = {
     { level: 3, text: 'browsing bilibili currently', entities: ['video', 'bilibili'] },
     { level: 4, text: 'watching rust async explained on bilibili', entities: ['video', 'bilibili', 'rust async explained'] },
   ],
-  quarantined: false,
+  acquisitionAudience: [OWNER],
+  scope: 'global',
 };
 
 const poisonAtom: MemoryAtom = {
@@ -34,7 +35,8 @@ const poisonAtom: MemoryAtom = {
   acquisitionContext: 'dm',
   topics: ['activity'],
   layers: [{ level: 1, text: 'bob shared a secret meeting location downtown', entities: ['bob'] }],
-  quarantined: true,
+  acquisitionAudience: [OWNER, BOB],
+  scope: 'local',
 };
 
 async function makeDeps(): Promise<EgressDeps> {
@@ -110,11 +112,35 @@ describe('egress checker (second line of defense)', () => {
     expect(requestEvents(deps.ledger)).toHaveLength(0);
   });
 
-  it('quarantined content is fully blocked even for a fully-granted audience', async () => {
+  it('echoing a local atom back into its own acquisition room is not a leak', async () => {
     const deps = await makeDeps();
-    // give bob everything on the topic — quarantine must still block
+    const result = await checkEgress(deps, {
+      audience: [BOB], // bob said it; repeating it to bob discloses nothing new
+      reply: 'apparently bob shared a secret meeting location downtown',
+      threshold: 0.5,
+    });
+    expect(result.hits.find((h) => h.atomId === 'poison')).toBeUndefined();
+  });
+
+  it('local content is fully blocked outside its room, even for a fully-granted audience', async () => {
+    const deps = await makeDeps();
+    // give carol everything on the topic — room scope must still block
     const acl = new AclStore(deps.db, deps.ledger);
-    acl.applyGrant({ object: 'topic:activity', relation: 'viewer', subject: BOB, resolution: 4 });
+    acl.applyGrant({ object: 'topic:activity', relation: 'viewer', subject: 'person:carol', resolution: 4 });
+
+    const result = await checkEgress(deps, {
+      audience: ['person:carol'],
+      reply: 'apparently bob shared a secret meeting location downtown',
+      threshold: 0.5,
+    });
+
+    expect(result.verdict).toBe('escalate');
+    expect(result.hits.find((h) => h.atomId === 'poison')).toBeDefined();
+  });
+
+  it('sealed content is blocked for everyone, including its own room', async () => {
+    const deps = await makeDeps();
+    deps.store.setScope('poison', 'sealed');
 
     const result = await checkEgress(deps, {
       audience: [BOB],

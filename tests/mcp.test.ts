@@ -25,7 +25,8 @@ const biliAtom: MemoryAtom = {
     { level: 3, text: 'he is watching bilibili', entities: ['computer', 'video', 'bilibili'] },
     { level: 4, text: 'he is watching rust async explained on bilibili', entities: ['computer', 'video', 'bilibili', 'rust async explained'] },
   ],
-  quarantined: false,
+  acquisitionAudience: [OWNER],
+  scope: 'global',
 };
 
 const strangerDrafts: LayerDraft[] = [
@@ -87,16 +88,18 @@ describe('MCP adapter', () => {
     expect(textOf(result)).toBe('(no permitted memories)');
   });
 
-  it('store attributes provenance to the audience: content lands in quarantine', async () => {
+  it('store attributes provenance to the audience: content lands room-local', async () => {
     const { client, store, ledger } = await connect([BOB]);
     const result = await client.callTool({
       name: 'aperture_store',
       arguments: { content: 'i am moving to shanghai next tuesday, new address 88 guangfu road' },
     });
 
-    expect(textOf(result)).toContain('quarantined');
-    expect(store.listQuarantined()).toHaveLength(1);
-    expect(store.listVisible()).toHaveLength(1); // only the seeded owner atom
+    expect(textOf(result)).toContain('room-local');
+    expect(store.listLocal()).toHaveLength(1);
+    expect(store.listGlobal()).toHaveLength(1); // only the seeded owner atom
+    // The room is frozen on the atom: this server's launch audience plus the owner.
+    expect(store.listLocal()[0]!.acquisitionAudience).toEqual([BOB, OWNER].sort());
     expect([...ledger.events()].some((e) => e.type === 'ingress.received')).toBe(true);
     expect(ledger.verify().ok).toBe(true);
   });

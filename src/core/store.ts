@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Layer, MemoryAtom } from './atom.js';
+import type { AtomScope, Layer, MemoryAtom } from './atom.js';
 
 interface AtomRow {
   id: string;
@@ -8,8 +8,9 @@ interface AtomRow {
   source_channel: string;
   source_ts: number;
   acquisition_context: string;
+  acq_audience: string;
   topics: string;
-  quarantined: number;
+  scope: string;
 }
 
 interface LayerRow {
@@ -29,8 +30,9 @@ export class AtomStore {
         source_channel      TEXT NOT NULL,
         source_ts           INTEGER NOT NULL,
         acquisition_context TEXT NOT NULL,
+        acq_audience        TEXT NOT NULL,
         topics              TEXT NOT NULL,
-        quarantined         INTEGER NOT NULL
+        scope               TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS layers (
         atom_id  TEXT NOT NULL REFERENCES atoms(id),
@@ -40,12 +42,26 @@ export class AtomStore {
         PRIMARY KEY (atom_id, level)
       );
     `);
+    this.migrateQuarantinedColumn();
+  }
+
+  /** Pre-scope databases had a `quarantined` boolean; map it onto scopes once. */
+  private migrateQuarantinedColumn(): void {
+    const cols = this.db.prepare('PRAGMA table_info(atoms)').all() as Array<{ name: string }>;
+    const names = new Set(cols.map((c) => c.name));
+    if (names.has('scope')) return;
+    this.db.exec(`
+      ALTER TABLE atoms ADD COLUMN acq_audience TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE atoms ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';
+      UPDATE atoms SET scope = CASE WHEN quarantined = 1 THEN 'local' ELSE 'global' END,
+                       acq_audience = json_array(source_who);
+    `);
   }
 
   insert(atom: MemoryAtom): void {
     const insertAtom = this.db.prepare(`
-      INSERT INTO atoms (id, subject, source_who, source_channel, source_ts, acquisition_context, topics, quarantined)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO atoms (id, subject, source_who, source_channel, source_ts, acquisition_context, acq_audience, topics, scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertLayer = this.db.prepare(
       'INSERT INTO layers (atom_id, level, text, entities) VALUES (?, ?, ?, ?)',
@@ -58,8 +74,9 @@ export class AtomStore {
         atom.source.channel,
         atom.source.ts,
         atom.acquisitionContext,
+        JSON.stringify(atom.acquisitionAudience),
         JSON.stringify(atom.topics),
-        atom.quarantined ? 1 : 0,
+        atom.scope,
       );
       for (const layer of atom.layers) {
         insertLayer.run(atom.id, layer.level, layer.text, JSON.stringify(layer.entities));
@@ -67,30 +84,40 @@ export class AtomStore {
     })();
   }
 
-  /** Admin path — returns the atom regardless of quarantine state. */
+  /** Admin path — returns the atom regardless of scope. */
   get(id: string): MemoryAtom | undefined {
     const row = this.db.prepare('SELECT * FROM atoms WHERE id = ?').get(id) as AtomRow | undefined;
     if (!row) return undefined;
     return this.hydrate(row);
   }
 
-  /** The read path: quarantined atoms do not exist here. */
-  listVisible(): MemoryAtom[] {
+  /** The read path: everything a retrieval MAY consider (sealed atoms do not exist here). */
+  listRetrievable(): MemoryAtom[] {
     const rows = this.db
-      .prepare('SELECT * FROM atoms WHERE quarantined = 0 ORDER BY source_ts ASC')
+      .prepare("SELECT * FROM atoms WHERE scope != 'sealed' ORDER BY source_ts ASC")
       .all() as AtomRow[];
     return rows.map((row) => this.hydrate(row));
   }
 
-  listQuarantined(): MemoryAtom[] {
+  /** Globally retrievable atoms only (the pre-scope `listVisible`). */
+  listGlobal(): MemoryAtom[] {
+    return this.listByScope('global');
+  }
+
+  /** Room-local atoms — the review queue for promotion. */
+  listLocal(): MemoryAtom[] {
+    return this.listByScope('local');
+  }
+
+  listByScope(scope: AtomScope): MemoryAtom[] {
     const rows = this.db
-      .prepare('SELECT * FROM atoms WHERE quarantined = 1 ORDER BY source_ts ASC')
-      .all() as AtomRow[];
+      .prepare('SELECT * FROM atoms WHERE scope = ? ORDER BY source_ts ASC')
+      .all(scope) as AtomRow[];
     return rows.map((row) => this.hydrate(row));
   }
 
-  setQuarantined(id: string, quarantined: boolean): void {
-    this.db.prepare('UPDATE atoms SET quarantined = ? WHERE id = ?').run(quarantined ? 1 : 0, id);
+  setScope(id: string, scope: AtomScope): void {
+    this.db.prepare('UPDATE atoms SET scope = ? WHERE id = ?').run(scope, id);
   }
 
   private hydrate(row: AtomRow): MemoryAtom {
@@ -107,9 +134,10 @@ export class AtomStore {
       subject: JSON.parse(row.subject) as string[],
       source: { who: row.source_who, channel: row.source_channel, ts: row.source_ts },
       acquisitionContext: row.acquisition_context,
+      acquisitionAudience: JSON.parse(row.acq_audience) as string[],
       topics: JSON.parse(row.topics) as string[],
       layers,
-      quarantined: row.quarantined === 1,
+      scope: row.scope as AtomScope,
     };
   }
 }

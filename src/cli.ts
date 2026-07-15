@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { approveAtom } from './core/ingest.js';
+import { promoteAtom, sealAtom } from './core/ingest.js';
 import { Ledger } from './core/ledger.js';
 import { AclStore, check } from './core/rebac.js';
 import { AtomStore } from './core/store.js';
@@ -10,8 +10,9 @@ export interface CliDeps {
 }
 
 const USAGE = `usage: aperture <command> [...args]
-  quarantine                                    list atoms awaiting approval
-  approve <atomId>                              release an atom from quarantine
+  pending                                       list room-local atoms
+  promote <atomId>                              lift an atom into the global profile
+  seal <atomId>                                 reject an atom (visible nowhere)
   grant <object> <relation> <subject> <0-4>     write an ACL tuple (ledgered)
   revoke <object> <relation> <subject>          delete an ACL tuple (ledgered)
   check <subject> <object>                      resolution of subject on object
@@ -36,10 +37,11 @@ export async function runCli(
 
   try {
     switch (command) {
+      case 'pending':
       case 'quarantine': {
-        const atoms = store.listQuarantined();
+        const atoms = store.listLocal();
         if (atoms.length === 0) {
-          out('quarantine is empty');
+          out('no room-local atoms');
           return 0;
         }
         for (const atom of atoms) {
@@ -48,14 +50,17 @@ export async function runCli(
         return 0;
       }
 
-      case 'approve': {
+      case 'promote':
+      case 'approve':
+      case 'seal': {
+        const verb = command === 'seal' ? 'seal' : 'promote';
         const atomId = rest[0];
         if (!atomId) {
-          out('usage: approve <atomId>');
+          out(`usage: ${verb} <atomId>`);
           return 1;
         }
-        approveAtom({ store, ledger, ownerId }, atomId, ownerId);
-        out(`approved ${atomId}`);
+        (verb === 'seal' ? sealAtom : promoteAtom)({ store, ledger, ownerId }, atomId, ownerId);
+        out(`${verb === 'seal' ? 'sealed' : 'promoted'} ${atomId}`);
         return 0;
       }
 

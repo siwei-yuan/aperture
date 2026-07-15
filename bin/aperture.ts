@@ -2,8 +2,8 @@
 /**
  * Owner CLI.
  *
- *   aperture --db ~/.aperture/aperture.db quarantine
- *   aperture --db ~/.aperture/aperture.db approve <atomId>
+ *   aperture --db ~/.aperture/aperture.db pending
+ *   aperture --db ~/.aperture/aperture.db promote <atomId>
  *   aperture --db ~/.aperture/aperture.db grant topic:activity viewer tier:friend#member 3
  *   aperture --db ~/.aperture/aperture.db disclosures --viewer person:bob
  *   aperture --db ~/.aperture/aperture.db verify

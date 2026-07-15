@@ -16,16 +16,35 @@ export interface Layer {
   entities: string[];
 }
 
+/**
+ * Visibility scope of an atom.
+ * - `local`: usable only where no new disclosure happens — rooms whose whole
+ *   audience was present at acquisition (owner is an implicit member
+ *   everywhere). The default for anything a non-owner said. No approval
+ *   needed for in-room use; leaving the room requires promotion.
+ * - `global`: retrievable everywhere, layer-gated by ReBAC resolution.
+ *   The default for the owner's own knowledge; non-owner content gets here
+ *   only via an owner-signed promotion.
+ * - `sealed`: visible nowhere (owner explicitly rejected it). Stays on the
+ *   ledger for audit.
+ */
+export type AtomScope = 'local' | 'global' | 'sealed';
+
 export interface MemoryAtom {
   id: string;
   /** Who the information is ABOUT (not necessarily the speaker). */
   subject: string[];
   source: Source;
-  /** Audience scope at the time the info was acquired (contextual integrity). */
+  /** Channel label at the time the info was acquired (contextual integrity). */
   acquisitionContext: string;
+  /**
+   * Person ids present when the info was acquired — the room's membership,
+   * frozen at ingest, with the owner materialized in. The mechanical basis
+   * of the "no new disclosure" rule for local atoms.
+   */
+  acquisitionAudience: string[];
   topics: string[];
   /** Ascending levels 1..n, n <= MAX_LAYERS. Frozen at ingest. */
   layers: Layer[];
-  /** True until the owner approves atoms from non-owner sources. */
-  quarantined: boolean;
+  scope: AtomScope;
 }

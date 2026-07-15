@@ -11,6 +11,11 @@ export interface RawEvent {
   topics: string[];
   source: Source;
   acquisitionContext: string;
+  /**
+   * Person ids present when this was said (room membership). Defaults to
+   * just the speaker; the owner is materialized in at ingest either way.
+   */
+  acquisitionAudience?: string[];
 }
 
 export interface LayerDraft {
@@ -104,17 +109,23 @@ export class IngestPipeline {
       }
 
       if (violations.length === 0) {
-        // Provenance rule: information originating outside the owner is
-        // quarantined until explicitly approved — it must never silently
-        // merge into the profile any session can read from.
+        // Provenance rule: the owner's own knowledge is global; anything a
+        // non-owner said is local to the room it was said in — freely usable
+        // there (no new disclosure), but it never silently merges into the
+        // globally retrievable profile. Leaving the room takes an
+        // owner-signed promotion.
+        const acquisitionAudience = [
+          ...new Set([...(event.acquisitionAudience ?? [event.source.who]), this.ownerId]),
+        ].sort();
         const atom: MemoryAtom = {
           id: randomUUID(),
           subject: event.subject,
           source: event.source,
           acquisitionContext: event.acquisitionContext,
+          acquisitionAudience,
           topics: event.topics,
           layers,
-          quarantined: event.source.who !== this.ownerId,
+          scope: event.source.who === this.ownerId ? 'global' : 'local',
         };
 
         this.store.insert(atom);
@@ -124,9 +135,10 @@ export class IngestPipeline {
           subject: atom.subject,
           source: atom.source,
           acquisitionContext: atom.acquisitionContext,
+          acquisitionAudience: atom.acquisitionAudience,
           topics: atom.topics,
           layers: atom.layers,
-          quarantined: atom.quarantined,
+          scope: atom.scope,
         });
         if (this.vectors) await this.vectors.index(atom);
         return { ok: true, atom };
@@ -143,25 +155,44 @@ export class IngestPipeline {
     return { ok: false, violations: lastViolations };
   }
 
-  /** Only the owner can release an atom from quarantine; approval is a ledger event. */
-  approve(atomId: string, approverId: string): void {
-    approveAtom({ store: this.store, ledger: this.ledger, ownerId: this.ownerId }, atomId, approverId);
+  /** Only the owner can promote a local atom to global; promotion is a ledger event. */
+  promote(atomId: string, approverId: string): void {
+    promoteAtom({ store: this.store, ledger: this.ledger, ownerId: this.ownerId }, atomId, approverId);
   }
 }
 
-/** Standalone approval (used by the pipeline and the owner CLI). */
-export function approveAtom(
+function requireLocalAtom(
+  deps: { store: AtomStore; ownerId: string },
+  atomId: string,
+  actorId: string,
+  verb: string,
+): void {
+  if (actorId !== deps.ownerId) {
+    throw new Error(`only the owner can ${verb} atoms (got "${actorId}")`);
+  }
+  const atom = deps.store.get(atomId);
+  if (!atom) throw new Error(`unknown atom "${atomId}"`);
+  if (atom.scope !== 'local') throw new Error(`atom "${atomId}" is ${atom.scope}, not local`);
+}
+
+/** Owner signature: lift a local atom into the globally retrievable profile. */
+export function promoteAtom(
   deps: { store: AtomStore; ledger: Ledger; ownerId: string },
   atomId: string,
   approverId: string,
 ): void {
-  if (approverId !== deps.ownerId) {
-    throw new Error(`only the owner can approve quarantined atoms (got "${approverId}")`);
-  }
-  const atom = deps.store.get(atomId);
-  if (!atom) throw new Error(`unknown atom "${atomId}"`);
-  if (!atom.quarantined) throw new Error(`atom "${atomId}" is not quarantined`);
+  requireLocalAtom(deps, atomId, approverId, 'promote');
+  deps.store.setScope(atomId, 'global');
+  deps.ledger.append('atom.promoted', { atomId, approverId });
+}
 
-  deps.store.setQuarantined(atomId, false);
-  deps.ledger.append('atom.approved', { atomId, approverId });
+/** Owner signature: reject a local atom — visible nowhere, kept on the ledger for audit. */
+export function sealAtom(
+  deps: { store: AtomStore; ledger: Ledger; ownerId: string },
+  atomId: string,
+  approverId: string,
+): void {
+  requireLocalAtom(deps, atomId, approverId, 'seal');
+  deps.store.setScope(atomId, 'sealed');
+  deps.ledger.append('atom.sealed', { atomId, approverId });
 }

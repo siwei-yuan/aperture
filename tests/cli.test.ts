@@ -21,41 +21,53 @@ async function run(deps: CliDeps, ...argv: string[]) {
   return { code, lines, text: lines.join('\n') };
 }
 
-function quarantinedAtom(id: string): MemoryAtom {
+function localAtom(id: string): MemoryAtom {
   return {
     id,
     subject: [OWNER],
     source: { who: 'person:bob', channel: 'telegram:dm', ts: 1_000 },
     acquisitionContext: 'dm',
+    acquisitionAudience: [OWNER, 'person:bob'],
     topics: ['activity'],
     layers: [{ level: 1, text: 'bob has news', entities: ['bob'] }],
-    quarantined: true,
+    scope: 'local',
   };
 }
 
 describe('owner CLI', () => {
-  it('quarantine list → approve flips visibility and ledgers the approval', async () => {
+  it('pending list → promote lifts the atom to global and ledgers the promotion', async () => {
     const { store, ledger, deps } = makeDeps();
-    store.insert(quarantinedAtom('a-9'));
+    store.insert(localAtom('a-9'));
 
-    const list = await run(deps, 'quarantine');
+    const list = await run(deps, 'pending');
     expect(list.code).toBe(0);
     expect(list.text).toContain('a-9');
     expect(list.text).toContain('person:bob');
 
-    const approve = await run(deps, 'approve', 'a-9');
-    expect(approve.code).toBe(0);
-    expect(store.listVisible()).toHaveLength(1);
-    expect(store.listQuarantined()).toHaveLength(0);
-    expect([...ledger.events()].map((e) => e.type)).toContain('atom.approved');
+    const promote = await run(deps, 'promote', 'a-9');
+    expect(promote.code).toBe(0);
+    expect(store.listGlobal()).toHaveLength(1);
+    expect(store.listLocal()).toHaveLength(0);
+    expect([...ledger.events()].map((e) => e.type)).toContain('atom.promoted');
 
-    const empty = await run(deps, 'quarantine');
-    expect(empty.text).toBe('quarantine is empty');
+    const empty = await run(deps, 'pending');
+    expect(empty.text).toBe('no room-local atoms');
   });
 
-  it('approve on an unknown atom fails cleanly with a nonzero exit', async () => {
+  it('seal rejects an atom out of every read path', async () => {
+    const { store, ledger, deps } = makeDeps();
+    store.insert(localAtom('a-7'));
+
+    const seal = await run(deps, 'seal', 'a-7');
+    expect(seal.code).toBe(0);
+    expect(store.get('a-7')?.scope).toBe('sealed');
+    expect(store.listRetrievable()).toHaveLength(0);
+    expect([...ledger.events()].map((e) => e.type)).toContain('atom.sealed');
+  });
+
+  it('promote on an unknown atom fails cleanly with a nonzero exit', async () => {
     const { deps } = makeDeps();
-    const result = await run(deps, 'approve', 'nope');
+    const result = await run(deps, 'promote', 'nope');
     expect(result.code).toBe(1);
     expect(result.text).toContain('unknown atom');
   });

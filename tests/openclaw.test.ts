@@ -22,7 +22,8 @@ const biliAtom: MemoryAtom = {
     { level: 2, text: 'he is watching a video', entities: ['computer', 'video'] },
     { level: 3, text: 'he is watching bilibili', entities: ['computer', 'video', 'bilibili'] },
   ],
-  quarantined: false,
+  acquisitionAudience: [OWNER],
+  scope: 'global',
 };
 
 const drafts: LayerDraft[] = [
@@ -136,8 +137,8 @@ describe('OpenClaw adapter (real hook contract)', () => {
     expect(res.prependContext).not.toContain('bilibili');
   });
 
-  it('agent_end quarantines episodes from non-owner senders', async () => {
-    const { host, store } = await makePlugin();
+  it('agent_end lands non-owner episodes room-local, with the room frozen on the atom', async () => {
+    const { host, store, bob } = await makePlugin();
     await host.fire(
       'agent_end',
       {
@@ -149,10 +150,12 @@ describe('OpenClaw adapter (real hook contract)', () => {
       },
       agentCtx(),
     );
+    await new Promise((r) => setTimeout(r, 0)); // detached capture settles
 
-    const quarantined = store.listQuarantined();
-    expect(quarantined).toHaveLength(1);
-    expect(quarantined[0]!.source.who).not.toBe(OWNER);
+    const local = store.listLocal();
+    expect(local).toHaveLength(1);
+    expect(local[0]!.source.who).toBe(bob);
+    expect(local[0]!.acquisitionAudience).toEqual([bob, OWNER].sort());
   });
 
   it('agent hooks fall back to the conversation id when senderId is absent (owner DM)', async () => {
@@ -167,8 +170,8 @@ describe('OpenClaw adapter (real hook contract)', () => {
       },
       agentCtx({ channelId: 'owner_tg', senderId: undefined }),
     );
-    expect(store.listQuarantined()).toHaveLength(0);
-    expect(store.listVisible()).toHaveLength(2); // seeded atom + new owner atom
+    expect(store.listLocal()).toHaveLength(0);
+    expect(store.listGlobal()).toHaveLength(2); // seeded atom + new owner atom
 
     const res = (await host.fire(
       'before_prompt_build',
@@ -178,7 +181,7 @@ describe('OpenClaw adapter (real hook contract)', () => {
     expect(res?.prependContext).toContain('bilibili'); // owner sees the finest layer
   });
 
-  it('agent_end keeps owner-sent episodes out of quarantine', async () => {
+  it('agent_end lands owner-sent episodes global directly', async () => {
     const { host, store } = await makePlugin();
     await host.fire(
       'agent_end',
@@ -188,9 +191,10 @@ describe('OpenClaw adapter (real hook contract)', () => {
       },
       agentCtx({ channelId: 'dm:owner_tg', senderId: 'owner_tg' }),
     );
+    await new Promise((r) => setTimeout(r, 0));
 
-    expect(store.listQuarantined()).toHaveLength(0);
-    expect(store.listVisible()).toHaveLength(2); // seeded atom + new owner atom
+    expect(store.listLocal()).toHaveLength(0);
+    expect(store.listGlobal()).toHaveLength(2); // seeded atom + new owner atom
   });
 
   it('message_sending rewrites a leaky reply to the safe placeholder', async () => {
@@ -227,10 +231,10 @@ describe('OpenClaw adapter (real hook contract)', () => {
     expect(res).toBeUndefined();
   });
 
-  it('the /aperture command executes owner actions without the model and pushes quarantine notices', async () => {
+  it('demand-driven promotion: writing is silent; another room asking triggers ONE suggestion push', async () => {
     const { host, store, ownerPushes } = await makePlugin();
 
-    // Bob's turn quarantines an atom and the owner gets pushed a notice.
+    // Bob's turn lands room-local — and no push happens at write time.
     await host.fire(
       'agent_end',
       {
@@ -240,32 +244,50 @@ describe('OpenClaw adapter (real hook contract)', () => {
       agentCtx(),
     );
     await new Promise((r) => setTimeout(r, 0)); // detached capture settles
-    expect(store.listQuarantined()).toHaveLength(1);
-    const notice = ownerPushes.find((t) => t.includes('/aperture approve'));
-    expect(notice).toBeDefined();
+    expect(store.listLocal()).toHaveLength(1);
+    expect(ownerPushes.filter((t) => t.includes('/aperture promote'))).toHaveLength(0);
 
-    // The owner sends the pushed command; the host routes it around the model.
-    const approveCmd = notice!.match(/\/aperture approve [0-9a-f]+/)![0];
+    // Bob's own room can use it immediately — no approval, full resolution.
+    const bobRoom = (await host.fire(
+      'before_prompt_build',
+      { prompt: 'bob moving news shanghai', messages: [] },
+      agentCtx(),
+    )) as { prependContext?: string };
+    expect(bobRoom.prependContext).toContain('shanghai');
+
+    // Alice's room asks about it → scope blocks it → the owner gets the suggestion.
+    await host.fire(
+      'before_prompt_build',
+      { prompt: 'bob moving news shanghai', messages: [] },
+      agentCtx({ channelId: 'dm:alice_tg', senderId: 'alice_tg' }),
+    );
+    const notice = ownerPushes.find((t) => t.includes('/aperture promote'));
+    expect(notice).toBeDefined();
+    expect(notice).not.toContain('shanghai'); // coarsest layer only
+
+    // The owner taps the pushed command; the host routes it around the model.
+    const promoteCmd = notice!.match(/\/aperture promote [0-9a-f]+/)![0];
     const res = await host.command('aperture', {
       channelId: 'telegram',
       senderId: 'owner_tg',
-      commandBody: approveCmd,
+      commandBody: promoteCmd,
     });
-    expect(res.text).toContain('approved');
-    expect(store.listQuarantined()).toHaveLength(0);
+    expect(res.text).toContain('promoted');
+    expect(store.listLocal()).toHaveLength(0);
+    expect(store.listGlobal().map((a) => a.id)).toContain(store.listGlobal()[1]?.id);
   });
 
   it('the /aperture command refuses everyone but the owner', async () => {
     const { host, store } = await makePlugin();
-    store.insert({ ...biliAtom, id: 'q1', quarantined: true });
+    store.insert({ ...biliAtom, id: 'q1', scope: 'local' });
 
     const res = await host.command('aperture', {
       channelId: 'telegram',
       senderId: 'bob_tg',
-      commandBody: '/aperture quarantine',
+      commandBody: '/aperture pending',
     });
     expect(res.text).toBe('aperture: owner only');
-    expect(store.listQuarantined()).toHaveLength(1);
+    expect(store.listLocal()).toHaveLength(1);
   });
 
   it('a first-time sender triggers exactly one new-contact push, in the live hook order', async () => {
@@ -299,7 +321,7 @@ describe('OpenClaw adapter (real hook contract)', () => {
     expect(text).not.toContain('bilibili');
   });
 
-  it('the store tool quarantines content attributed to the requesting peer', async () => {
+  it('the store tool lands peer-attributed content room-local', async () => {
     const { host, store } = await makePlugin();
     const tools = host.tools({
       messageChannel: 'telegram',
@@ -309,7 +331,7 @@ describe('OpenClaw adapter (real hook contract)', () => {
     const res = await tools.get('aperture_store')!.execute('call-2', {
       content: 'bob says he is moving to shanghai, 88 guangfu road',
     });
-    expect(res.content[0]!.text).toContain('quarantined');
-    expect(store.listQuarantined()).toHaveLength(1);
+    expect(res.content[0]!.text).toContain('room-local');
+    expect(store.listLocal()).toHaveLength(1);
   });
 });

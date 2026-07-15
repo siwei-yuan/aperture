@@ -4,7 +4,7 @@ import {
   handleOwnerCommand,
   newContactNotice,
   noteContact,
-  quarantineNotice,
+  promotionNotice,
   type ConsoleDeps,
 } from '../src/console.js';
 import type { MemoryAtom } from '../src/core/atom.js';
@@ -23,15 +23,16 @@ function makeStack(): ConsoleDeps & { db: Database.Database } {
   return { db, store, ledger, ownerId: OWNER };
 }
 
-function quarantinedAtom(id: string, who = 'person:bob'): MemoryAtom {
+function localAtom(id: string, who = 'person:bob'): MemoryAtom {
   return {
     id,
     subject: [who],
     source: { who, channel: 'telegram:group', ts: 1_000 },
     acquisitionContext: 'telegram:group',
+    acquisitionAudience: [OWNER, who],
     topics: ['general'],
     layers: [{ level: 1, text: 'bob shared some news', entities: [] }],
-    quarantined: true,
+    scope: 'local',
   };
 }
 
@@ -41,12 +42,12 @@ const fromBob = (text: string) => ({ platform: 'telegram', senderExternalId: 'bo
 describe('owner gate', () => {
   it('commands from anyone but the owner are not commands, just words', () => {
     const deps = makeStack();
-    deps.store.insert(quarantinedAtom('aaaa1111-0000-0000-0000-000000000000'));
+    deps.store.insert(localAtom('aaaa1111-0000-0000-0000-000000000000'));
 
     // No refusal reply either — a refusal would leak the command grammar.
-    expect(handleOwnerCommand(deps, fromBob('/aperture quarantine'))).toEqual({ handled: false });
-    expect(handleOwnerCommand(deps, fromBob('/aperture approve aaaa1111'))).toEqual({ handled: false });
-    expect(deps.store.listQuarantined()).toHaveLength(1); // nothing released
+    expect(handleOwnerCommand(deps, fromBob('/aperture pending'))).toEqual({ handled: false });
+    expect(handleOwnerCommand(deps, fromBob('/aperture promote aaaa1111'))).toEqual({ handled: false });
+    expect(deps.store.listLocal()).toHaveLength(1); // nothing promoted
   });
 
   it('non-command text passes through untouched, even from the owner', () => {
@@ -65,34 +66,45 @@ describe('owner gate', () => {
   });
 });
 
-describe('quarantine and approve', () => {
-  it('lists pending atoms with ready-made approve commands', () => {
+describe('pending, promote and seal', () => {
+  it('lists room-local atoms with ready-made promote commands', () => {
     const deps = makeStack();
-    deps.store.insert(quarantinedAtom('aaaa1111-0000-0000-0000-000000000000'));
+    deps.store.insert(localAtom('aaaa1111-0000-0000-0000-000000000000'));
 
-    const res = handleOwnerCommand(deps, fromOwner('/aperture quarantine'));
-    expect(res.handled && res.reply).toContain('/aperture approve aaaa1111');
+    const res = handleOwnerCommand(deps, fromOwner('/aperture pending'));
+    expect(res.handled && res.reply).toContain('/aperture promote aaaa1111');
     expect(res.handled && res.reply).toContain('bob shared some news');
   });
 
-  it('releases by short-id prefix and ledgers the approval', () => {
+  it('promotes by short-id prefix and ledgers the promotion', () => {
     const deps = makeStack();
-    deps.store.insert(quarantinedAtom('aaaa1111-0000-0000-0000-000000000000'));
+    deps.store.insert(localAtom('aaaa1111-0000-0000-0000-000000000000'));
 
-    const res = handleOwnerCommand(deps, fromOwner('/aperture approve aaaa1111'));
-    expect(res.handled && res.reply).toContain('approved');
-    expect(deps.store.listQuarantined()).toHaveLength(0);
-    expect([...deps.ledger.events()].map((e) => e.type)).toContain('atom.approved');
+    const res = handleOwnerCommand(deps, fromOwner('/aperture promote aaaa1111'));
+    expect(res.handled && res.reply).toContain('promoted');
+    expect(deps.store.listLocal()).toHaveLength(0);
+    expect(deps.store.listGlobal()).toHaveLength(1);
+    expect([...deps.ledger.events()].map((e) => e.type)).toContain('atom.promoted');
+  });
+
+  it('seals by short-id prefix — visible nowhere afterwards', () => {
+    const deps = makeStack();
+    deps.store.insert(localAtom('aaaa1111-0000-0000-0000-000000000000'));
+
+    const res = handleOwnerCommand(deps, fromOwner('/aperture seal aaaa1111'));
+    expect(res.handled && res.reply).toContain('sealed');
+    expect(deps.store.listRetrievable()).toHaveLength(0);
+    expect([...deps.ledger.events()].map((e) => e.type)).toContain('atom.sealed');
   });
 
   it('refuses ambiguous prefixes instead of guessing', () => {
     const deps = makeStack();
-    deps.store.insert(quarantinedAtom('aaaa1111-0000-0000-0000-000000000000'));
-    deps.store.insert(quarantinedAtom('aaaa2222-0000-0000-0000-000000000000'));
+    deps.store.insert(localAtom('aaaa1111-0000-0000-0000-000000000000'));
+    deps.store.insert(localAtom('aaaa2222-0000-0000-0000-000000000000'));
 
-    const res = handleOwnerCommand(deps, fromOwner('/aperture approve aaaa'));
+    const res = handleOwnerCommand(deps, fromOwner('/aperture promote aaaa'));
     expect(res.handled && res.reply).toContain('ambiguous');
-    expect(deps.store.listQuarantined()).toHaveLength(2);
+    expect(deps.store.listLocal()).toHaveLength(2);
   });
 });
 
@@ -126,13 +138,15 @@ describe('grant and revoke', () => {
 });
 
 describe('notices', () => {
-  it('quarantine notice discloses only the coarsest layer', () => {
-    const atom = quarantinedAtom('aaaa1111-0000-0000-0000-000000000000');
-    atom.layers.push({ level: 2, text: 'bob is moving to shanghai', entities: ['shanghai'] });
-    const text = quarantineNotice(atom);
+  it('promotion notice discloses only the coarsest layer and offers both verbs', () => {
+    const text = promotionNotice({
+      atomId: 'aaaa1111-0000-0000-0000-000000000000',
+      summary: 'bob shared some news',
+      score: 0.9,
+    });
     expect(text).toContain('bob shared some news');
-    expect(text).not.toContain('shanghai');
-    expect(text).toContain('/aperture approve aaaa1111');
+    expect(text).toContain('/aperture promote aaaa1111');
+    expect(text).toContain('/aperture seal aaaa1111');
   });
 
   it('noteContact reports first sight exactly once', () => {

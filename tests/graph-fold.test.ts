@@ -99,8 +99,8 @@ describe('graph fold (T5.1)', () => {
     expect(flagged.n).toBeGreaterThan(0);
 
     const atomId = result.ok && 'atom' in result ? result.atom.id : '';
-    pipeline.approve(atomId, OWNER);
-    await foldAtoms(deps); // consumes the atom.approved event
+    pipeline.promote(atomId, OWNER);
+    await foldAtoms(deps); // consumes the atom.promoted event
 
     const still = db.prepare('SELECT COUNT(*) AS n FROM edges WHERE quarantined = 1').get() as { n: number };
     expect(still.n).toBe(0);

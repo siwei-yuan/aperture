@@ -42,9 +42,9 @@ describe('projection replay invariant', () => {
 
     await pipeline.ingest(event(OWNER, 1_000));
     const strangerResult = await pipeline.ingest(event(STRANGER, 2_000));
-    await pipeline.ingest(event(STRANGER, 3_000)); // stays quarantined
+    await pipeline.ingest(event(STRANGER, 3_000)); // stays room-local
     if (strangerResult.ok && 'atom' in strangerResult) {
-      pipeline.approve(strangerResult.atom.id, OWNER);
+      pipeline.promote(strangerResult.atom.id, OWNER);
     }
 
     const before = snapshot(db);

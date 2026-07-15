@@ -82,7 +82,7 @@ describe('capture: the single ingress entrance', () => {
     expect(result).toMatchObject({ gated: 'G1a-length' });
 
     expect(eventTypes(ledger)).toEqual(['ingress.received']);
-    expect(store.listVisible()).toHaveLength(0);
+    expect(store.listGlobal()).toHaveLength(0);
     expect(ledger.verify().ok).toBe(true);
   });
 
@@ -95,7 +95,7 @@ describe('capture: the single ingress entrance', () => {
 
     const second = await capture(deps, episode(`${text}！！`, { ts: 1_720_000_100_000 }));
     expect(second).toMatchObject({ gated: 'G1c-duplicate' });
-    expect(store.listVisible()).toHaveLength(1);
+    expect(store.listGlobal()).toHaveLength(1);
   });
 
   it('G1d: per-source hourly cap trips after distinct messages flood in', async () => {
@@ -137,7 +137,7 @@ describe('capture: the single ingress entrance', () => {
 
     const retry = await capture(deps, episode(text, { ts: 1_720_000_060_000 }));
     expect('ingest' in retry && retry.ingest.ok).toBe(true);
-    expect(store.listVisible()).toHaveLength(1);
+    expect(store.listGlobal()).toHaveLength(1);
 
     // But a completed call (even a skip) IS recorded: the third pass is a dup.
     const third = await capture(deps, episode(text, { ts: 1_720_000_120_000 }));
@@ -150,7 +150,7 @@ describe('capture: the single ingress entrance', () => {
     const result = await capture(deps, episode('他最近在忙什么呀，你知道吗？'));
     expect('ingest' in result && result.ingest.ok && 'skipped' in result.ingest && result.ingest.skipped).toBe('ephemeral');
     expect(eventTypes(ledger)).toEqual(['ingress.received']);
-    expect(store.listVisible()).toHaveLength(0);
+    expect(store.listGlobal()).toHaveLength(0);
   });
 });
 
@@ -173,7 +173,7 @@ describe('repair loop', () => {
 
     const result = await capture(deps, episode('我下周二搬去上海，新地址光复路88号'));
     expect('ingest' in result && result.ingest.ok).toBe(true);
-    expect(store.listVisible()).toHaveLength(1);
+    expect(store.listGlobal()).toHaveLength(1);
 
     expect(feedbackSeen).toHaveLength(2);
     expect(feedbackSeen[0]).toBeUndefined();
@@ -194,7 +194,7 @@ describe('repair loop', () => {
     expect('ingest' in result && !result.ingest.ok).toBe(true);
     expect(calls).toBe(3); // 1 initial + 2 repairs
     expect(eventTypes(ledger)).toEqual(['ingress.received', 'atom.rejected']);
-    expect(store.listVisible()).toHaveLength(0);
+    expect(store.listGlobal()).toHaveLength(0);
   });
 });
 

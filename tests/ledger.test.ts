@@ -12,7 +12,7 @@ describe('hash-chained ledger', () => {
     const { ledger } = makeLedger();
     ledger.append('atom.ingested', { atomId: 'a1' });
     ledger.append('atom.ingested', { atomId: 'a2' });
-    ledger.append('atom.approved', { atomId: 'a2', approverId: 'owner' });
+    ledger.append('atom.promoted', { atomId: 'a2', approverId: 'owner' });
     expect(ledger.verify()).toEqual({ ok: true });
   });
 
@@ -48,22 +48,22 @@ describe('hash-chained ledger', () => {
 
   it('projections are rebuildable by replay', () => {
     const { ledger } = makeLedger();
-    ledger.append('atom.ingested', { atomId: 'a1', quarantined: true });
-    ledger.append('atom.ingested', { atomId: 'a2', quarantined: false });
-    ledger.append('atom.approved', { atomId: 'a1', approverId: 'owner' });
+    ledger.append('atom.ingested', { atomId: 'a1', scope: 'local' });
+    ledger.append('atom.ingested', { atomId: 'a2', scope: 'global' });
+    ledger.append('atom.promoted', { atomId: 'a1', approverId: 'owner' });
 
-    // Rebuild the "currently quarantined" projection purely from events.
-    const quarantined = new Set<string>();
+    // Rebuild the "currently local" projection purely from events.
+    const local = new Set<string>();
     for (const event of ledger.events()) {
-      const payload = event.payload as { atomId: string; quarantined?: boolean };
-      if (event.type === 'atom.ingested' && payload.quarantined) quarantined.add(payload.atomId);
-      if (event.type === 'atom.approved') quarantined.delete(payload.atomId);
+      const payload = event.payload as { atomId: string; scope?: string };
+      if (event.type === 'atom.ingested' && payload.scope === 'local') local.add(payload.atomId);
+      if (event.type === 'atom.promoted') local.delete(payload.atomId);
     }
-    expect(quarantined.size).toBe(0);
+    expect(local.size).toBe(0);
 
     const counts: Record<string, number> = {};
     for (const event of ledger.events()) counts[event.type] = (counts[event.type] ?? 0) + 1;
-    expect(counts).toEqual({ 'atom.ingested': 2, 'atom.approved': 1 });
+    expect(counts).toEqual({ 'atom.ingested': 2, 'atom.promoted': 1 });
   });
 
   it('canonicalJson is key-order independent', () => {

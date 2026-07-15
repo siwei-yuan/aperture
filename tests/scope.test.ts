@@ -16,7 +16,8 @@ function atom(id: string, topics: string[]): MemoryAtom {
     acquisitionContext: 'private',
     topics,
     layers: [{ level: 1, text: `${id} fact detail`, entities: [] }],
-    quarantined: false,
+    acquisitionAudience: ['person:owner'],
+    scope: 'global',
   };
 }
 

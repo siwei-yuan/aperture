@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { VectorStore } from './embed.js';
 import type { Ledger } from './ledger.js';
-import { lookupVisibleLayers } from './rebac.js';
+import { ceilingsForAudience } from './rebac.js';
 import type { AtomStore } from './store.js';
 
 /**
@@ -9,9 +9,10 @@ import type { AtomStore } from './store.js';
  * context; this one catches replies that reconstruct them anyway — from
  * parametric knowledge or inference. Deterministic PII scan first, then
  * exact similarity against the BLOCKED complement: every layer above the
- * audience's ceiling, plus all layers of atoms invisible to it (quarantined
- * atoms fall out of `listVisible`, so their ceiling is 0 — fully blocked,
- * for free).
+ * audience's ceiling. Ceilings come from the same rule retrieval uses
+ * (`ceilingsForAudience`), so repeating a local atom back into its own
+ * acquisition room is not a leak, while sealed atoms and out-of-room local
+ * atoms are fully blocked.
  */
 
 export interface EgressDeps {
@@ -63,18 +64,10 @@ export async function checkEgress(
     }
   }
 
-  // Audience ceilings over visible atoms; anything absent from the map
-  // (unknown or quarantined) has ceiling 0 — every layer of it is blocked.
-  const visible = deps.store.listVisible();
-  const ceilings = new Map<string, number>();
-  if (req.audience.length > 0) {
-    const perMember = req.audience.map((m) => lookupVisibleLayers(deps.db, m, visible));
-    for (const atom of visible) {
-      let min = Infinity;
-      for (const member of perMember) min = Math.min(min, member.get(atom.id) ?? 0);
-      ceilings.set(atom.id, Number.isFinite(min) ? min : 0);
-    }
-  }
+  // Audience ceilings via the shared adjudication rule; anything absent
+  // from the map (sealed, out-of-room local, ungranted) has ceiling 0 —
+  // every layer of it is blocked.
+  const ceilings = ceilingsForAudience(deps.db, req.audience, deps.store.listRetrievable());
 
   for (const sentence of sentences) {
     const vec = await deps.vectors.embedQuery(sentence);

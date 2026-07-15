@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import type { RawEvent, LayerDraft, LayerGenerator } from '../src/core/ingest.js';
-import { IngestPipeline } from '../src/core/ingest.js';
+import { IngestPipeline, sealAtom } from '../src/core/ingest.js';
 import { Ledger } from '../src/core/ledger.js';
 import { AtomStore } from '../src/core/store.js';
 
@@ -37,15 +37,15 @@ function event(sourceWho: string): RawEvent {
   };
 }
 
-describe('ingest pipeline: provenance and quarantine invariants', () => {
-  it('owner-sourced atoms are visible immediately and recorded on the ledger', async () => {
+describe('ingest pipeline: provenance and scope invariants', () => {
+  it('owner-sourced atoms are global immediately and recorded on the ledger', async () => {
     const { store, ledger, pipeline } = makePipeline(fakeGenerator(validDrafts));
 
     const result = await pipeline.ingest(event(OWNER));
     expect(result.ok).toBe(true);
 
-    expect(store.listVisible()).toHaveLength(1);
-    expect(store.listQuarantined()).toHaveLength(0);
+    expect(store.listGlobal()).toHaveLength(1);
+    expect(store.listLocal()).toHaveLength(0);
 
     const events = [...ledger.events()];
     expect(events.map((e) => e.type)).toEqual(['atom.ingested']);
@@ -56,33 +56,59 @@ describe('ingest pipeline: provenance and quarantine invariants', () => {
     expect(ledger.verify().ok).toBe(true);
   });
 
-  it('non-owner-sourced atoms never reach the read path until the owner approves', async () => {
+  it('non-owner-sourced atoms land room-local; promotion makes them global', async () => {
     const { store, ledger, pipeline } = makePipeline(fakeGenerator(validDrafts));
 
     const result = await pipeline.ingest(event(STRANGER));
     expect(result.ok).toBe(true);
     const atomId = result.ok && 'atom' in result ? result.atom.id : '';
 
-    // Invariant: quarantined content is invisible to every read path.
-    expect(store.listVisible()).toHaveLength(0);
-    expect(store.listQuarantined()).toHaveLength(1);
+    // Invariant: non-owner content never silently merges into the global profile.
+    expect(store.listGlobal()).toHaveLength(0);
+    expect(store.listLocal()).toHaveLength(1);
 
-    pipeline.approve(atomId, OWNER);
-    expect(store.listVisible()).toHaveLength(1);
+    pipeline.promote(atomId, OWNER);
+    expect(store.listGlobal()).toHaveLength(1);
 
     const types = [...ledger.events()].map((e) => e.type);
-    expect(types).toEqual(['atom.ingested', 'atom.approved']);
+    expect(types).toEqual(['atom.ingested', 'atom.promoted']);
     expect(ledger.verify().ok).toBe(true);
   });
 
-  it('only the owner can approve', async () => {
+  it('the acquisition audience is frozen at ingest with the owner materialized in', async () => {
     const { pipeline } = makePipeline(fakeGenerator(validDrafts));
+    const result = await pipeline.ingest({
+      ...event(STRANGER),
+      acquisitionAudience: [STRANGER, 'person:bystander'],
+    });
+    const atom = result.ok && 'atom' in result ? result.atom : undefined;
+    expect(atom?.acquisitionAudience).toEqual([OWNER, 'person:bystander', STRANGER].sort());
+
+    // Default: just the speaker (plus the owner).
+    const solo = await pipeline.ingest({
+      ...event(STRANGER),
+      content: 'a different message entirely',
+    });
+    const soloAtom = solo.ok && 'atom' in solo ? solo.atom : undefined;
+    expect(soloAtom?.acquisitionAudience).toEqual([OWNER, STRANGER].sort());
+  });
+
+  it('only the owner can promote or seal, and only local atoms qualify', async () => {
+    const { store, ledger, pipeline } = makePipeline(fakeGenerator(validDrafts));
     const result = await pipeline.ingest(event(STRANGER));
     const atomId = result.ok && 'atom' in result ? result.atom.id : '';
 
-    expect(() => pipeline.approve(atomId, STRANGER)).toThrow(/only the owner/);
-    expect(() => pipeline.approve(atomId, OWNER)).not.toThrow();
-    expect(() => pipeline.approve(atomId, OWNER)).toThrow(/not quarantined/);
+    expect(() => pipeline.promote(atomId, STRANGER)).toThrow(/only the owner/);
+    expect(() => pipeline.promote(atomId, OWNER)).not.toThrow();
+    expect(() => pipeline.promote(atomId, OWNER)).toThrow(/not local/);
+
+    const sealed = await pipeline.ingest({ ...event(STRANGER), content: 'something else' });
+    const sealedId = sealed.ok && 'atom' in sealed ? sealed.atom.id : '';
+    expect(() => sealAtom({ store, ledger, ownerId: OWNER }, sealedId, STRANGER)).toThrow(/only the owner/);
+    sealAtom({ store, ledger, ownerId: OWNER }, sealedId, OWNER);
+    expect(store.get(sealedId)?.scope).toBe('sealed');
+    expect(store.listRetrievable().map((a) => a.id)).not.toContain(sealedId);
+    expect([...ledger.events()].map((e) => e.type)).toContain('atom.sealed');
   });
 
   it('entailment-violating ladders are rejected: nothing stored, rejection on the ledger', async () => {
@@ -96,8 +122,7 @@ describe('ingest pipeline: provenance and quarantine invariants', () => {
       expect(result.violations[0]!.reason).toContain('secret-detail');
     }
 
-    expect(store.listVisible()).toHaveLength(0);
-    expect(store.listQuarantined()).toHaveLength(0);
+    expect(store.listRetrievable()).toHaveLength(0);
 
     const types = [...ledger.events()].map((e) => e.type);
     expect(types).toEqual(['atom.rejected']);
@@ -117,7 +142,7 @@ describe('ingest pipeline: provenance and quarantine invariants', () => {
 
     const result = await vetoing.ingest(event(OWNER));
     expect(result.ok).toBe(false);
-    expect(store.listVisible()).toHaveLength(0);
+    expect(store.listRetrievable()).toHaveLength(0);
 
     const types = [...ledger.events()].map((e) => e.type);
     expect(types).toEqual(['atom.rejected']);
