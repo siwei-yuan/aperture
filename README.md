@@ -2,7 +2,7 @@
 
 **Disclosure control for personal AI agents.** Your agent remembers everything about you — and now anyone can message it. Aperture decides *who gets to know what*, structurally, before the model ever sees the question.
 
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen) ![Tests](https://img.shields.io/badge/tests-105%20passing-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen) ![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen)
 
 ```text
 $ npm run demo
@@ -313,6 +313,28 @@ The same verbs are available in chat when the OpenClaw adapter is installed
 (`/aperture pending` etc.) — commands are routed by the host around the model,
 so the model can neither see nor forge an owner signature.
 
+## Owner UI
+
+A local web console over the same core functions — nothing it can do is beyond
+the CLI, it just renders the tuples so you can see what you've signed:
+
+```bash
+npx tsx bin/aperture-ui.ts --db ~/.aperture/aperture.db
+# → aperture ui listening on http://127.0.0.1:4870/#t=<session-token>
+```
+
+Three views: **Matrix** (tier × topic policy grid — solid cells are explicit
+tuples you can click-cycle, hollow cells are evaluator-derived and ask before
+becoming an exception), **Disclosures** (what a given person has actually
+learned, folded from the ledger — read-only by nature), and **Circles**
+(concentric tier rings; every membership move shows its per-topic resolution
+diff before you sign it).
+
+Security: the server binds to `127.0.0.1` only (no `--host` flag exists; use
+ssh port forwarding for remote access), every API call requires the random
+session token from the printed URL, and the Host header is validated against
+DNS rebinding. The token dies with the process.
+
 ## Design commitments
 
 - **Sessions are partitioned by audience.** Each DM peer and each group chat is an
@@ -350,7 +372,7 @@ model hallucinates it, and fully auditable afterwards.
 
 ## Status
 
-Core complete (M0–M6) plus a live-validated OpenClaw binding. 105 invariant tests, two
+Core complete (M0–M6) plus a live-validated OpenClaw binding. 153 invariant tests, two
 runnable demos, real Telegram traffic through all three defense lines. Before trusting
 it with real secrets:
 
@@ -378,7 +400,7 @@ it with real secrets:
 
 ```bash
 npm install
-npm test          # 105 invariant tests (business logic only, no schema tests)
+npm test          # 153 invariant tests (business logic only, no schema tests)
 npm run typecheck
 ```
 
