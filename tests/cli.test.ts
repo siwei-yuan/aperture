@@ -4,6 +4,7 @@ import { runCli, type CliDeps } from '../src/cli.js';
 import type { MemoryAtom } from '../src/core/atom.js';
 import { Ledger } from '../src/core/ledger.js';
 import { AtomStore } from '../src/core/store.js';
+import { getSession, sessionFor } from '../src/session/router.js';
 
 const OWNER = 'person:owner';
 
@@ -89,6 +90,25 @@ describe('owner CLI', () => {
     const result = await run(deps, 'grant', 'topic:x', 'viewer', 'person:bob', '9');
     expect(result.code).toBe(1);
     expect(result.text).toContain('resolution must be an integer in 0..4');
+  });
+
+  it('allow widens a session scope with a ledger event; unknown sessions fail cleanly', async () => {
+    const { db, ledger, deps } = makeDeps();
+    const session = sessionFor(db, {
+      platform: 'telegram',
+      channel: 'dm:mom_tg',
+      peerExternalIds: ['mom_tg'],
+      ownerId: OWNER,
+    });
+
+    const ok = await run(deps, 'allow', session.id, 'health');
+    expect(ok.code).toBe(0);
+    expect(getSession(db, session.id)!.scope).toEqual(['health']);
+    expect([...ledger.events()].filter((e) => e.type === 'scope.widened')).toHaveLength(1);
+
+    const bad = await run(deps, 'allow', 'telegram:dm:nobody', 'health');
+    expect(bad.code).toBe(1);
+    expect(bad.text).toContain('unknown session');
   });
 
   it('disclosures filters by viewer and shows escalations', async () => {

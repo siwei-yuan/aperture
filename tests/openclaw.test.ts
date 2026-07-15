@@ -74,6 +74,7 @@ async function makePlugin(opts?: {
   debounceMs?: number;
   generator?: LayerGenerator;
   topicTaxonomy?: string[];
+  sensitiveTopics?: string[];
 }) {
   const db = new Database(':memory:');
   const store = new AtomStore(db);
@@ -94,6 +95,7 @@ async function makePlugin(opts?: {
     embedder: hashEmbedder(32),
     topics: ['activity'],
     topicTaxonomy: opts?.topicTaxonomy,
+    sensitiveTopics: opts?.sensitiveTopics,
     // Tests exercise per-turn capture by default; the burst debounce has its
     // own dedicated test below (and core coverage in debounce.test.ts).
     debounceMs: opts?.debounceMs ?? 0,
@@ -309,6 +311,38 @@ describe('OpenClaw adapter (real hook contract)', () => {
     await new Promise((r) => setTimeout(r, 120)); // quiet gap elapses
     const local = store.listLocal();
     expect(local).toHaveLength(1); // ONE coherent atom for the whole burst
+  });
+
+  it('sensitive-topic confirmation: withheld, pushed once, and the pushed allow command opens it', async () => {
+    const { host, ownerPushes } = await makePlugin({ sensitiveTopics: ['activity'] });
+    const ask = () =>
+      host.fire(
+        'before_prompt_build',
+        { prompt: 'what is he watching on his computer', messages: [] },
+        agentCtx(),
+      ) as Promise<{ prependContext?: string }>;
+
+    // Bob is ReBAC-cleared for L1, but the topic is sensitive: nothing enters.
+    const first = await ask();
+    expect(first.prependContext).toContain('no permitted memories');
+    const notice = ownerPushes.find((t) => t.includes('/aperture allow'));
+    expect(notice).toContain('activity');
+
+    // Asking again re-pushes nothing (scope.requested is the dedupe record).
+    await ask();
+    expect(ownerPushes.filter((t) => t.includes('/aperture allow'))).toHaveLength(1);
+
+    // The owner taps the pushed command; the next question flows at bob's ceiling.
+    const allowCmd = notice!.match(/\/aperture allow \S+ \S+/)![0];
+    const res = await host.command('aperture', {
+      channelId: 'telegram',
+      senderId: 'owner_tg',
+      commandBody: allowCmd,
+    });
+    expect(res.text).toContain('activity');
+    const after = await ask();
+    expect(after.prependContext).toContain('[L1] he is at his computer');
+    expect(after.prependContext).not.toContain('bilibili');
   });
 
   it('a distilled topic outside the taxonomy is announced to the owner exactly once', async () => {

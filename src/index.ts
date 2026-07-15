@@ -73,6 +73,7 @@ export {
   newTopicNotice,
   noteContact,
   promotionNotice,
+  scopeNotice,
   shortId,
 } from './console.js';
 export type { ConsoleDeps, ConsoleResult } from './console.js';

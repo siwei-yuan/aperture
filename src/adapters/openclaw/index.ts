@@ -14,7 +14,7 @@ import type Database from 'better-sqlite3';
 import { buildJsonPluginConfigSchema, definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from 'typebox';
-import { handleOwnerCommand, newContactNotice, newTopicNotice, noteContact, promotionNotice } from '../../console.js';
+import { handleOwnerCommand, newContactNotice, newTopicNotice, noteContact, promotionNotice, scopeNotice } from '../../console.js';
 import { openDatabase } from '../../core/db.js';
 import { hashEmbedder, httpEmbedder, VectorStore, type Embedder } from '../../core/embed.js';
 import { checkEgress } from '../../core/egress.js';
@@ -44,6 +44,11 @@ export interface ApertureDeps {
    * either way: no grants = no one sees it).
    */
   topicTaxonomy?: string[];
+  /**
+   * Topics (with their subtrees) the scope driver never widens into on its
+   * own — a session enters one only via an owner-signed `/aperture allow`.
+   */
+  sensitiveTopics?: string[];
   /** Proactive push to the owner (promotion / new-contact notices). Absent = no pushes. */
   notifyOwner?: (text: string) => void | Promise<void>;
   /**
@@ -89,7 +94,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
   const ledger = new Ledger(db);
   const vectors = new VectorStore(db, config.embedder ?? hashEmbedder(64));
   const pipeline = new IngestPipeline({ store, ledger, ownerId, generator: config.generator, vectors });
-  const membrane = { db, ledger, store, vectors, ownerId };
+  const membrane = { db, ledger, store, vectors, ownerId, sensitiveTopics: config.sensitiveTopics };
   const topics = config.topics ?? ['general'];
 
   for (const [platform, externalId] of Object.entries(config.ownerExternalIds ?? {})) {
@@ -151,9 +156,11 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
       ownerId,
     });
     const res = await retrieveForSession(membrane, { sessionId: session.id, query: event.prompt });
-    // Demand-driven promotion: another room wanted a local atom — the owner
-    // decides, once, out of band. This is the ONLY approval touchpoint.
+    // Demand-driven owner touchpoints, both deduped on the ledger: another
+    // room wanted a local atom (promotion), or this session wants a
+    // sensitive topic (scope confirmation).
     for (const suggestion of res.suggestions) notify(promotionNotice(suggestion));
+    for (const blocked of res.scopeBlocked) notify(scopeNotice(blocked));
     if (res.items.length === 0) return { prependContext: EMPTY_RECALL };
     return {
       prependContext: `<aperture-memory>\n${res.items.map((i) => `[L${i.level}] ${i.text}`).join('\n')}\n</aperture-memory>`,
@@ -261,6 +268,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
             const session = sessionFor(db, { platform, channel, peerExternalIds: peer ? [peer] : [], ownerId });
             const query = String((params as { query?: unknown }).query ?? '');
             const res = await retrieveForSession(membrane, { sessionId: session.id, query });
+            for (const blocked of res.scopeBlocked) notify(scopeNotice(blocked));
             return text(
               res.items.length === 0
                 ? '(no permitted memories)'
@@ -385,6 +393,7 @@ const CONFIG_SCHEMA = {
     ownerExternalIds: { type: 'object', additionalProperties: { type: 'string' } },
     topics: { type: 'array', items: { type: 'string' } },
     topicTaxonomy: { type: 'array', items: { type: 'string' } },
+    sensitiveTopics: { type: 'array', items: { type: 'string' } },
     debounceMs: { type: 'number' },
     llm: ENDPOINT_SCHEMA,
     embed: ENDPOINT_SCHEMA,
@@ -404,6 +413,7 @@ export default definePluginEntry({
       ownerExternalIds?: Record<string, string>;
       topics?: string[];
       topicTaxonomy?: string[];
+      sensitiveTopics?: string[];
       debounceMs?: number;
       llm?: EndpointConfig;
       embed?: EndpointConfig;
@@ -436,6 +446,7 @@ export default definePluginEntry({
       embedder: makeEmbedder(cfg.embed),
       topics: cfg.topics,
       topicTaxonomy: cfg.topicTaxonomy,
+      sensitiveTopics: cfg.sensitiveTopics,
       debounceMs: cfg.debounceMs,
       notifyOwner,
     });

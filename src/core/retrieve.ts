@@ -133,8 +133,22 @@ export async function retrieve(
       widenScope({ db: deps.db, ledger: deps.ledger }, req.sessionId, safe);
       scope = [...new Set([...scope, ...safe])];
     }
-    for (const topic of [...inferred].filter(isSensitive)) {
-      scopeBlocked.push({ topic, sessionId: req.sessionId });
+    // Sensitive topics take an owner signature; each session×topic is
+    // requested at most once — `scope.requested` on the ledger is the
+    // dedupe record, so a restart never re-asks the owner.
+    const wanted = [...inferred].filter(isSensitive);
+    if (wanted.length > 0) {
+      const alreadyRequested = new Set<string>();
+      for (const event of deps.ledger.events()) {
+        if (event.type !== 'scope.requested') continue;
+        const p = event.payload as { sessionId: string; topic: string };
+        if (p.sessionId === req.sessionId) alreadyRequested.add(p.topic);
+      }
+      for (const topic of wanted) {
+        if (alreadyRequested.has(topic)) continue;
+        deps.ledger.append('scope.requested', { sessionId: req.sessionId, topic }, now);
+        scopeBlocked.push({ topic, sessionId: req.sessionId });
+      }
     }
   }
 

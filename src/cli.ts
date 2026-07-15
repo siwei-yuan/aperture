@@ -3,6 +3,7 @@ import { promoteAtom, sealAtom } from './core/ingest.js';
 import { Ledger } from './core/ledger.js';
 import { AclStore, check } from './core/rebac.js';
 import { AtomStore } from './core/store.js';
+import { widenScope } from './session/router.js';
 
 export interface CliDeps {
   db: Database.Database;
@@ -15,6 +16,7 @@ const USAGE = `usage: aperture <command> [...args]
   seal <atomId>                                 reject an atom (visible nowhere)
   grant <object> <relation> <subject> <0-4>     write an ACL tuple (ledgered)
   revoke <object> <relation> <subject>          delete an ACL tuple (ledgered)
+  allow <sessionId> <topic>                     let a session enter a sensitive topic (ledgered)
   check <subject> <object>                      resolution of subject on object
   disclosures [--viewer <person>]               what left the membrane, to whom
   verify                                        verify the ledger hash chain`;
@@ -83,6 +85,17 @@ export async function runCli(
         }
         acl.revoke({ object, relation, subject });
         out(`revoked ${object}#${relation}@${subject}`);
+        return 0;
+      }
+
+      case 'allow': {
+        const [sessionId, topic] = rest;
+        if (!sessionId || !topic) {
+          out('usage: allow <sessionId> <topic>');
+          return 1;
+        }
+        widenScope({ db, ledger }, sessionId, [topic]);
+        out(`${sessionId} may now enter "${topic}"`);
         return 0;
       }
 

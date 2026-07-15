@@ -2,9 +2,9 @@ import type Database from 'better-sqlite3';
 import { promoteAtom, sealAtom } from './core/ingest.js';
 import type { Ledger } from './core/ledger.js';
 import { AclStore } from './core/rebac.js';
-import type { PromotionSuggestion } from './core/retrieve.js';
+import type { PromotionSuggestion, ScopeBlock } from './core/retrieve.js';
 import type { AtomStore } from './core/store.js';
-import { peekIdentity, resolveIdentity } from './session/router.js';
+import { ensureSessionTables, getSession, peekIdentity, resolveIdentity, widenScope, type Session } from './session/router.js';
 
 /**
  * Owner console: the chat-native counterpart of the CLI. The design rule it
@@ -35,7 +35,8 @@ const HELP = `aperture owner console:
 /aperture promote <id> — lift an atom into the globally retrievable profile
 /aperture seal <id> — reject an atom (visible nowhere, stays on the ledger)
 /aperture grant <who> <tier> — add <who> to a tier (who: platform:id or person:id-prefix)
-/aperture revoke <who> <tier> — remove <who> from a tier`;
+/aperture revoke <who> <tier> — remove <who> from a tier
+/aperture allow <session> <topic> — let a conversation enter a sensitive topic (session: platform:channel or platform:externalId)`;
 
 /** First uuid segment: 8 hex chars, no hyphens — safe in tappable commands. */
 export function shortId(atomId: string): string {
@@ -51,6 +52,14 @@ export function promotionNotice(s: PromotionSuggestion): string {
     `🔓 another conversation wanted a room-local memory:\n` +
     `"${s.summary}"\n` +
     `/aperture promote ${shortId(s.atomId)} to share it · /aperture seal ${shortId(s.atomId)} to reject · ignoring keeps it room-local`
+  );
+}
+
+/** Push text when a session's query wanted a sensitive topic the scope withheld. */
+export function scopeNotice(b: ScopeBlock): string {
+  return (
+    `🔒 conversation ${b.sessionId} wants to enter the "${b.topic}" topic (sensitive — held back)\n` +
+    `/aperture allow ${b.sessionId} ${b.topic} to let it in · ignoring keeps it out`
   );
 }
 
@@ -88,6 +97,29 @@ function expandPersonPrefix(db: Database.Database, ref: string): string | undefi
     .all(ref) as Array<{ person_id: string }>;
   if (rows.length === 1) return rows[0]!.person_id;
   return rows.some((r) => r.person_id === ref) ? ref : undefined;
+}
+
+/**
+ * Session ref → session. The pushed notice carries the exact session id
+ * (platform:channel), so the direct lookup is the common path; as a
+ * convenience, `platform:externalId` also resolves when that person has
+ * exactly one DM session.
+ */
+function resolveSessionRef(db: Database.Database, ref: string): Session | undefined {
+  const direct = getSession(db, ref);
+  if (direct) return direct;
+
+  const colon = ref.indexOf(':');
+  if (colon <= 0 || colon === ref.length - 1) return undefined;
+  const person = peekIdentity(db, ref.slice(0, colon), ref.slice(colon + 1));
+  if (!person) return undefined;
+  ensureSessionTables(db);
+  const rows = db.prepare('SELECT id, audience FROM sessions').all() as Array<{ id: string; audience: string }>;
+  const matches = rows.filter((r) => {
+    const audience = JSON.parse(r.audience) as string[];
+    return audience.length === 1 && audience[0] === person;
+  });
+  return matches.length === 1 ? getSession(db, matches[0]!.id) : undefined;
 }
 
 /** `<platform>:<externalId>` or `person:<id-prefix>` → person id. Minting is fine here: the owner is about to grant. */
@@ -150,6 +182,15 @@ export function handleOwnerCommand(
         handled: true,
         reply: `${verb === 'seal' ? 'sealed' : 'promoted'}: "${matches[0]!.layers[0]?.text ?? matches[0]!.id}"`,
       };
+    }
+
+    case 'allow': {
+      const [sessionRef, topic] = args;
+      if (!sessionRef || !topic) return { handled: true, reply: 'usage: /aperture allow <session> <topic>' };
+      const session = resolveSessionRef(deps.db, sessionRef);
+      if (!session) return { handled: true, reply: `unknown session "${sessionRef}"` };
+      widenScope({ db: deps.db, ledger: deps.ledger }, session.id, [topic]);
+      return { handled: true, reply: `${session.id} may now enter "${topic}"` };
     }
 
     case 'grant':

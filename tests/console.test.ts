@@ -11,7 +11,7 @@ import type { MemoryAtom } from '../src/core/atom.js';
 import { Ledger } from '../src/core/ledger.js';
 import { check } from '../src/core/rebac.js';
 import { AtomStore } from '../src/core/store.js';
-import { linkIdentity, resolveIdentity } from '../src/session/router.js';
+import { getSession, linkIdentity, resolveIdentity, sessionFor } from '../src/session/router.js';
 
 const OWNER = 'person:owner';
 
@@ -134,6 +134,52 @@ describe('grant and revoke', () => {
     const bob = resolveIdentity(deps.db, 'telegram', 'bob_tg');
     const res = handleOwnerCommand(deps, fromOwner(`/aperture grant ${bob.slice(0, 14)} friend`));
     expect(res.handled && res.reply).toContain('tier:friend');
+  });
+});
+
+describe('allow: sensitive-topic scope approval', () => {
+  const withSession = () => {
+    const deps = makeStack();
+    const session = sessionFor(deps.db, {
+      platform: 'telegram',
+      channel: 'dm:mom_tg',
+      peerExternalIds: ['mom_tg'],
+      ownerId: OWNER,
+    });
+    return { deps, session };
+  };
+
+  it('widens the session scope by exact session id, ledgered', () => {
+    const { deps, session } = withSession();
+    expect(session.scope).toEqual([]);
+
+    const res = handleOwnerCommand(deps, fromOwner(`/aperture allow ${session.id} health`));
+    expect(res.handled && res.reply).toContain('health');
+    expect(getSession(deps.db, session.id)!.scope).toEqual(['health']);
+    const widened = [...deps.ledger.events()].filter((e) => e.type === 'scope.widened');
+    expect(widened).toHaveLength(1);
+    expect(widened[0]!.payload).toMatchObject({ sessionId: session.id, to: ['health'] });
+  });
+
+  it('also resolves platform:externalId when that person has exactly one DM session', () => {
+    const { deps, session } = withSession();
+    handleOwnerCommand(deps, fromOwner('/aperture allow telegram:mom_tg health'));
+    expect(getSession(deps.db, session.id)!.scope).toEqual(['health']);
+  });
+
+  it('a non-owner allow is not a command and changes nothing', () => {
+    const { deps, session } = withSession();
+    expect(handleOwnerCommand(deps, fromBob(`/aperture allow ${session.id} health`))).toEqual({
+      handled: false,
+    });
+    expect(getSession(deps.db, session.id)!.scope).toEqual([]);
+    expect([...deps.ledger.events()].filter((e) => e.type === 'scope.widened')).toHaveLength(0);
+  });
+
+  it('an unresolvable session ref is refused', () => {
+    const { deps } = withSession();
+    const res = handleOwnerCommand(deps, fromOwner('/aperture allow telegram:nobody_tg health'));
+    expect(res.handled && res.reply).toContain('unknown session');
   });
 });
 

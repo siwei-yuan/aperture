@@ -165,6 +165,13 @@ describe('TBAC task scope — the driver', () => {
     expect(res.scopeBlocked).toEqual([{ topic: 'health', sessionId }]);
     expect(getSession(db, sessionId)!.scope).not.toContain('health'); // not widened
 
+    // Asked again before the owner reacts: still withheld, but the request
+    // is not re-raised — scope.requested on the ledger is the dedupe record.
+    const again = await retrieveForSession(deps, { sessionId, query: 'health fact detail', k: 10 });
+    expect(again.items.map((i) => i.atomId)).not.toContain('health');
+    expect(again.scopeBlocked).toEqual([]);
+    expect([...deps.ledger.events()].filter((e) => e.type === 'scope.requested')).toHaveLength(1);
+
     // Owner signs: widenScope is the approval primitive (console/CLI call it).
     widenScope(deps, sessionId, ['health']);
     const approved = await retrieveForSession(deps, { sessionId, query: 'health fact detail', k: 10 });

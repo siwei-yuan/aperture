@@ -38,6 +38,12 @@
           "type": "string"
         }
       },
+      "sensitiveTopics": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
       "debounceMs": {
         "type": "number"
       },
