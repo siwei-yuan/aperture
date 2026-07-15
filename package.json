@@ -1,0 +1,62 @@
+{
+  "name": "aperture",
+  "version": "0.1.0",
+  "description": "Disclosure-control harness for personal AI agents: resolution-typed memory authorization, ReBAC, and an append-only disclosure ledger.",
+ "type": "module",
+ "license": "MIT",
+ "repository": {
+  "type": "git",
+  "url": "https://github.com/siwei-yuan/aperture.git"
+ },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "demo": "tsx examples/hero.ts",
+    "demo:dorm": "tsx examples/dorm.ts"
+  },
+  "keywords": [
+    "ai-agent",
+    "privacy",
+    "rebac",
+    "memory",
+    "disclosure-control",
+    "access-control"
+  ],
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^26.1.1",
+    "fast-check": "^4.9.0",
+    "openclaw": "^2026.6.9",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "typebox": "^1.1.39",
+    "zod": "^4.4.3"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.28.1": true
+  },
+  "exports": [
+    "./src/index.ts"
+  ],
+  "openclaw": {
+    "extensions": ["./src/adapters/openclaw/index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.6.9",
+      "minGatewayVersion": "2026.6.9"
+    }
+  },
+  "bin": {
+    "aperture-mcp": "./bin/aperture-mcp.ts",
+    "aperture": "./bin/aperture.ts"
+  }
+}

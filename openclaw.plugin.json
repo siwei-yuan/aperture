@@ -1,0 +1,71 @@
+{
+  "id": "aperture",
+  "name": "Aperture",
+  "description": "Disclosure-control memory: resolution-typed retrieval, quarantined ingest, append-only disclosure ledger.",
+  "version": "0.1.0",
+  "kind": "memory",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": ["aperture_recall", "aperture_store"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": {
+        "type": "string"
+      },
+      "ownerId": {
+        "type": "string"
+      },
+      "ownerExternalIds": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "topics": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": { "type": "string" },
+          "apiKey": { "type": "string" },
+          "model": { "type": "string" },
+          "dim": { "type": "number" }
+        }
+      },
+      "embed": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": { "type": "string" },
+          "apiKey": { "type": "string" },
+          "model": { "type": "string" },
+          "dim": { "type": "number" }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "dbPath": {
+      "label": "Database path",
+      "placeholder": "~/.aperture/aperture.db"
+    },
+    "ownerId": {
+      "label": "Owner person id",
+      "placeholder": "person:owner"
+    },
+    "ownerExternalIds": {
+      "label": "Owner external ids",
+      "help": "platform → the owner's own external id, so their messages are not quarantined."
+    }
+  }
+}
