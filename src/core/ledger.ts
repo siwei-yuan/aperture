@@ -41,6 +41,10 @@ function eventHash(seq: number, ts: number, type: string, payloadJson: string, p
  * projections must be rebuildable by replaying it.
  */
 export class Ledger {
+  private readonly appendTx: Database.Transaction<
+    (type: string, payloadJson: string, ts: number) => { seq: number; prevHash: string; hash: string }
+  >;
+
   constructor(private readonly db: Database.Database) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS ledger (
@@ -52,19 +56,27 @@ export class Ledger {
         hash      TEXT    NOT NULL
       )
     `);
+    // Read-head + insert must be one transaction: two processes appending
+    // concurrently would otherwise both read the same last seq and collide
+    // on the primary key. Run as BEGIN IMMEDIATE (see append) so the write
+    // lock is taken BEFORE reading the head, not after.
+    this.appendTx = db.transaction((type: string, payloadJson: string, ts: number) => {
+      const last = this.db
+        .prepare('SELECT seq, hash FROM ledger ORDER BY seq DESC LIMIT 1')
+        .get() as { seq: number; hash: string } | undefined;
+      const seq = (last?.seq ?? 0) + 1;
+      const prevHash = last?.hash ?? GENESIS;
+      const hash = eventHash(seq, ts, type, payloadJson, prevHash);
+      this.db
+        .prepare('INSERT INTO ledger (seq, ts, type, payload, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(seq, ts, type, payloadJson, prevHash, hash);
+      return { seq, prevHash, hash };
+    });
   }
 
   append(type: string, payload: unknown, ts: number = Date.now()): LedgerEvent {
-    const last = this.db
-      .prepare('SELECT seq, hash FROM ledger ORDER BY seq DESC LIMIT 1')
-      .get() as { seq: number; hash: string } | undefined;
-    const seq = (last?.seq ?? 0) + 1;
-    const prevHash = last?.hash ?? GENESIS;
     const payloadJson = canonicalJson(payload);
-    const hash = eventHash(seq, ts, type, payloadJson, prevHash);
-    this.db
-      .prepare('INSERT INTO ledger (seq, ts, type, payload, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(seq, ts, type, payloadJson, prevHash, hash);
+    const { seq, prevHash, hash } = this.appendTx.immediate(type, payloadJson, ts);
     return { seq, ts, type, payload, prevHash, hash };
   }
 

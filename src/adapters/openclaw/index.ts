@@ -10,11 +10,12 @@
  *                         disclosure.request for owner review)
  *   aperture_recall / aperture_store → tools bound to the runtime tool context
  */
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { buildJsonPluginConfigSchema, definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from 'typebox';
 import { handleOwnerCommand, newContactNotice, noteContact, promotionNotice } from '../../console.js';
+import { openDatabase } from '../../core/db.js';
 import { hashEmbedder, httpEmbedder, VectorStore, type Embedder } from '../../core/embed.js';
 import { checkEgress } from '../../core/egress.js';
 import { IngestPipeline, type LayerGenerator } from '../../core/ingest.js';
@@ -395,7 +396,7 @@ export default definePluginEntry({
         : undefined;
 
     registerAperture(api, {
-      db: new Database(cfg.dbPath),
+      db: openDatabase(cfg.dbPath),
       ownerId: cfg.ownerId,
       ownerExternalIds: cfg.ownerExternalIds,
       generator: makeGenerator(cfg.llm),

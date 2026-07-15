@@ -8,9 +8,9 @@
  *   aperture --db ~/.aperture/aperture.db disclosures --viewer person:bob
  *   aperture --db ~/.aperture/aperture.db verify
  */
-import Database from 'better-sqlite3';
 import { parseArgs } from 'node:util';
 import { runCli } from '../src/cli.js';
+import { openDatabase } from '../src/core/db.js';
 
 const { values, positionals } = parseArgs({
   options: {
@@ -30,7 +30,7 @@ const argv = [...positionals];
 if (values.viewer) argv.push('--viewer', values.viewer);
 
 const code = await runCli(
-  { db: new Database(values.db), ownerId: values.owner! },
+  { db: openDatabase(values.db), ownerId: values.owner! },
   argv,
   (line) => console.log(line),
 );

@@ -16,10 +16,10 @@
  * on the ledger but skips distillation (honest degradation).
  */
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import Database from 'better-sqlite3';
 import { parseArgs } from 'node:util';
 import type { LayerGenerator } from '../src/core/ingest.js';
 import { createApertureMcpServer } from '../src/adapters/mcp.js';
+import { openDatabase } from '../src/core/db.js';
 import { LlmLayerGenerator, type LlmClient } from '../src/gen/llm-generator.js';
 
 const { values } = parseArgs({
@@ -68,7 +68,7 @@ function makeGenerator(): LayerGenerator {
 }
 
 const server = createApertureMcpServer({
-  db: new Database(values.db),
+  db: openDatabase(values.db),
   ownerId: values.owner,
   audience: values.audience.split(',').map((s) => s.trim()),
   channel: values.channel,

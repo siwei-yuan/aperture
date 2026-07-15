@@ -7,6 +7,9 @@ export type { AtomScope, Layer, MemoryAtom, Source } from './core/atom.js';
 export { MAX_LAYERS, validateLadder } from './core/entail.js';
 export type { LadderCheck, LadderViolation } from './core/entail.js';
 
+// Database opener (WAL + busy_timeout — required for multi-process sharing)
+export { openDatabase } from './core/db.js';
+
 // The ledger (single source of truth) and projection replay
 export { canonicalJson, Ledger } from './core/ledger.js';
 export type { LedgerEvent } from './core/ledger.js';
