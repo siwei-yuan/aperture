@@ -21,12 +21,13 @@ export { cosine, hashEmbedder, httpEmbedder, VectorStore } from './core/embed.js
 export type { Embedder, KnnHit } from './core/embed.js';
 
 // Resolution-typed ReBAC
-export { AclStore, ceilingsForAudience, check, lookupVisibleLayers, resolutionForAtom } from './core/rebac.js';
+export { AclStore, ceilingsForAudience, check, lookupVisibleLayers, resolutionForAtom, topicAncestors } from './core/rebac.js';
 export type { RelationTuple, TupleRef } from './core/rebac.js';
 
 // Ingest (membrane, inbound)
 export { IngestPipeline, promoteAtom, sealAtom } from './core/ingest.js';
 export type {
+  GeneratedLadder,
   IngestResult,
   LayerDraft,
   LayerGenerator,
@@ -69,6 +70,7 @@ export type { CliDeps } from './cli.js';
 export {
   handleOwnerCommand,
   newContactNotice,
+  newTopicNotice,
   noteContact,
   promotionNotice,
   shortId,

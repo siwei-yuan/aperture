@@ -148,6 +148,18 @@ describe('ingest pipeline: provenance and scope invariants', () => {
     expect(types).toEqual(['atom.rejected']);
   });
 
+  it('distiller-chosen topics beat the caller\'s suggestion; absent topics leave it in force', async () => {
+    const tagged = makePipeline({
+      generate: async () => ({ layers: structuredClone(validDrafts), topics: ['work/alpha'] }),
+    });
+    const taggedResult = await tagged.pipeline.ingest(event(OWNER)); // event suggests ['activity']
+    expect(taggedResult.ok && 'atom' in taggedResult ? taggedResult.atom.topics : []).toEqual(['work/alpha']);
+
+    const untagged = makePipeline(fakeGenerator(validDrafts));
+    const untaggedResult = await untagged.pipeline.ingest(event(OWNER));
+    expect(untaggedResult.ok && 'atom' in untaggedResult ? untaggedResult.atom.topics : []).toEqual(['activity']);
+  });
+
   it('atoms are frozen artifacts: layers round-trip identically through the store', async () => {
     const { store, pipeline } = makePipeline(fakeGenerator(validDrafts));
     const result = await pipeline.ingest(event(OWNER));

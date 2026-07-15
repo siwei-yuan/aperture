@@ -213,6 +213,26 @@ describe('LlmLayerGenerator output handling', () => {
     expect(out).toEqual([{ level: 1, text: 'a fact', entities: ['x'] }]);
   });
 
+  it('keeps well-formed hierarchical topics and drops the rest', async () => {
+    const out = await gen(
+      '{"topics": ["work/alpha", "Work Alpha!", 42, "health"], "layers": [{"level": 1, "text": "a fact", "entities": []}]}',
+    );
+    expect(out).toEqual({
+      layers: [{ level: 1, text: 'a fact', entities: [] }],
+      topics: ['work/alpha', 'health'],
+    });
+  });
+
+  it('a topics array that yields nothing valid falls back to "general"', async () => {
+    const out = await gen('{"topics": ["NOT/A/Valid Path"], "layers": [{"level": 1, "text": "a fact", "entities": []}]}');
+    expect(out).toMatchObject({ topics: ['general'] });
+  });
+
+  it('a missing topics field leaves the caller\'s suggestion in force (bare drafts)', async () => {
+    const out = await gen('{"layers": [{"level": 1, "text": "a fact", "entities": []}]}');
+    expect(Array.isArray(out)).toBe(true);
+  });
+
   it('malformed JSON or shape degrades to an empty ladder (invariant rejects it)', async () => {
     expect(await gen('not json at all')).toEqual([]);
     expect(await gen('{"layers": "nope"}')).toEqual([]);

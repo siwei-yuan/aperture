@@ -91,6 +91,36 @@ describe('(max, min) semiring evaluator — concrete semantics', () => {
   });
 });
 
+describe('hierarchical topics: ancestor-path evaluation', () => {
+  it('a grant on the ancestor covers every subtopic (coarse signature, fine coverage)', () => {
+    const db = withAcl([T('topic:work', 'viewer', 'person:alice', 3)]);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a1', topics: ['work/alpha'] })).toBe(3);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a2', topics: ['work/alpha/reports'] })).toBe(3);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a3', topics: ['work'] })).toBe(3);
+  });
+
+  it('a subtopic grant never climbs to the parent or to siblings', () => {
+    const db = withAcl([T('topic:work/alpha', 'viewer', 'person:alice', 4)]);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a1', topics: ['work'] })).toBe(0);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a2', topics: ['work/beta'] })).toBe(0);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a3', topics: ['work/alpha'] })).toBe(4);
+  });
+
+  it('paths combine by max: the finer of an ancestor and a leaf grant wins', () => {
+    const db = withAcl([
+      T('topic:work', 'viewer', 'person:alice', 1),
+      T('topic:work/alpha', 'viewer', 'person:alice', 4),
+    ]);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a1', topics: ['work/alpha'] })).toBe(4);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a2', topics: ['work/beta'] })).toBe(1);
+  });
+
+  it('a freshly proposed topic is deny-by-default for everyone', () => {
+    const db = withAcl([T('topic:work', 'viewer', 'person:alice', 4)]);
+    expect(resolutionForAtom(db, 'person:alice', { id: 'a1', topics: ['hobby/gamma'] })).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Property tests
 // ---------------------------------------------------------------------------

@@ -48,11 +48,31 @@ Hard rules:
 
 ## Also extract
 - subject: who each fact is ABOUT (not necessarily the speaker)
-- topics: 1-3 tags, open vocabulary (activity, health, finance, work,
-  relationship, preference, schedule, entertainment, ...)
+- topics: see Step 3
 
 Return JSON matching the provided schema.
 ```
+
+When the owner configured a `topicTaxonomy`, a third step is appended
+(`LlmLayerGenerator` constructor argument):
+
+```text
+## Step 3 — Tag topics (only when distilling)
+Pick 1 to 3 topics from the owner's controlled vocabulary (hierarchical
+paths, "/" nests a subtopic under its parent):
+{taxonomy, comma-joined}
+Only if none fits, propose ONE new path nested under an existing path
+(e.g. "work/gamma" under "work"); it must match [a-z0-9-]+(/[a-z0-9-]+)*.
+Add the tags to the JSON: {"topics": ["work/alpha"], "layers": [...]}
+```
+
+The parser enforces the path grammar deterministically: malformed topics are
+dropped; a topics array that yields nothing valid falls back to `general`
+(zero grants unless the owner signed some); a missing topics field leaves the
+caller's suggested topics in force. A proposed topic outside the taxonomy is
+stored as-is — new topics have no grants, so they are invisible until the
+owner signs a resolution — and announced to the owner once
+(`topic.discovered` on the ledger is the dedupe record).
 
 ## User message template
 

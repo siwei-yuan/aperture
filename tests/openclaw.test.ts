@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { EGRESS_PLACEHOLDER, registerAperture, type ApertureHostApi } from '../src/adapters/openclaw/index.js';
 import type { MemoryAtom } from '../src/core/atom.js';
 import { hashEmbedder, VectorStore } from '../src/core/embed.js';
-import type { LayerDraft } from '../src/core/ingest.js';
+import type { LayerDraft, LayerGenerator } from '../src/core/ingest.js';
 import { Ledger } from '../src/core/ledger.js';
 import { AclStore } from '../src/core/rebac.js';
 import { AtomStore } from '../src/core/store.js';
@@ -70,7 +70,11 @@ function fakeHost() {
   return { api, hooks, fire, command, tools };
 }
 
-async function makePlugin(opts?: { debounceMs?: number }) {
+async function makePlugin(opts?: {
+  debounceMs?: number;
+  generator?: LayerGenerator;
+  topicTaxonomy?: string[];
+}) {
   const db = new Database(':memory:');
   const store = new AtomStore(db);
   const ledger = new Ledger(db);
@@ -86,9 +90,10 @@ async function makePlugin(opts?: { debounceMs?: number }) {
     db,
     ownerId: OWNER,
     ownerExternalIds: { telegram: 'owner_tg' },
-    generator: { generate: async () => structuredClone(drafts) },
+    generator: opts?.generator ?? { generate: async () => structuredClone(drafts) },
     embedder: hashEmbedder(32),
     topics: ['activity'],
+    topicTaxonomy: opts?.topicTaxonomy,
     // Tests exercise per-turn capture by default; the burst debounce has its
     // own dedicated test below (and core coverage in debounce.test.ts).
     debounceMs: opts?.debounceMs ?? 0,
@@ -304,6 +309,24 @@ describe('OpenClaw adapter (real hook contract)', () => {
     await new Promise((r) => setTimeout(r, 120)); // quiet gap elapses
     const local = store.listLocal();
     expect(local).toHaveLength(1); // ONE coherent atom for the whole burst
+  });
+
+  it('a distilled topic outside the taxonomy is announced to the owner exactly once', async () => {
+    const { host, ledger, ownerPushes } = await makePlugin({
+      topicTaxonomy: ['work', 'health'],
+      generator: { generate: async () => ({ layers: structuredClone(drafts), topics: ['work/gamma'] }) },
+    });
+    const turn = (text: string) => ({ messages: [{ role: 'user', content: text }], success: true });
+
+    await host.fire('agent_end', turn('bob: the gamma project kickoff is next monday'), agentCtx());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ownerPushes.filter((t) => t.includes('new topic') && t.includes('work/gamma'))).toHaveLength(1);
+
+    // Second atom with the same new topic: the ledger event is the dedupe record.
+    await host.fire('agent_end', turn('bob: gamma budget review moved to friday afternoon'), agentCtx());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ownerPushes.filter((t) => t.includes('work/gamma'))).toHaveLength(1);
+    expect([...ledger.events()].filter((e) => e.type === 'topic.discovered')).toHaveLength(1);
   });
 
   it('a first-time sender triggers exactly one new-contact push, in the live hook order', async () => {

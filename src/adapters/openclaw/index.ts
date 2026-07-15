@@ -14,11 +14,12 @@ import type Database from 'better-sqlite3';
 import { buildJsonPluginConfigSchema, definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from 'typebox';
-import { handleOwnerCommand, newContactNotice, noteContact, promotionNotice } from '../../console.js';
+import { handleOwnerCommand, newContactNotice, newTopicNotice, noteContact, promotionNotice } from '../../console.js';
 import { openDatabase } from '../../core/db.js';
 import { hashEmbedder, httpEmbedder, VectorStore, type Embedder } from '../../core/embed.js';
 import { checkEgress } from '../../core/egress.js';
 import { IngestPipeline, type LayerGenerator } from '../../core/ingest.js';
+import type { CaptureResult } from '../../gen/capture.js';
 import { Ledger } from '../../core/ledger.js';
 import { retrieveForSession } from '../../core/retrieve.js';
 import { AtomStore } from '../../core/store.js';
@@ -36,6 +37,13 @@ export interface ApertureDeps {
   embedder?: Embedder;
   /** Default topic tags for captured episodes. */
   topics?: string[];
+  /**
+   * Owner's controlled topic vocabulary (hierarchical paths like
+   * "work/alpha"). Injected into the distillation prompt; a distilled topic
+   * outside it triggers a one-time owner notice (the topic itself is safe
+   * either way: no grants = no one sees it).
+   */
+  topicTaxonomy?: string[];
   /** Proactive push to the owner (promotion / new-contact notices). Absent = no pushes. */
   notifyOwner?: (text: string) => void | Promise<void>;
   /**
@@ -103,6 +111,25 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
     return contact.personId;
   };
 
+  // New-topic detection over every capture path: a distilled topic outside
+  // the taxonomy (and outside the configured defaults) is announced to the
+  // owner exactly once — `topic.discovered` on the ledger is the dedupe
+  // record, so a restart never re-announces.
+  const knownTopics = new Set([...(config.topicTaxonomy ?? []), ...topics]);
+  const seeTopics = (result: CaptureResult): void => {
+    if ('gated' in result || !result.ingest.ok || !('atom' in result.ingest)) return;
+    const atom = result.ingest.atom;
+    for (const topic of atom.topics) {
+      if (knownTopics.has(topic)) continue;
+      const announced = [...ledger.events()].some(
+        (e) => e.type === 'topic.discovered' && (e.payload as { topic: string }).topic === topic,
+      );
+      if (announced) continue;
+      ledger.append('topic.discovered', { topic, atomId: atom.id });
+      notify(newTopicNotice(topic));
+    }
+  };
+
   /** Injected when adjudication returns nothing: the model must know that it does not know. */
   const EMPTY_RECALL =
     '<aperture-memory>\n(no permitted memories for this audience — do not assume any prior ' +
@@ -165,6 +192,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
     { db, ledger, pipeline },
     ownerId,
     { ...DEFAULT_DEBOUNCE, quietMs: debounceMs },
+    seeTopics,
   );
 
   api.on('agent_end', async (event, ctx) => {
@@ -192,9 +220,9 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
       acquisitionAudience: session?.audience ?? [who],
     };
     if (debounceMs <= 0) {
-      void capture({ db, ledger, pipeline }, fragment).catch((err) =>
-        console.error('[aperture] capture failed:', err),
-      );
+      void capture({ db, ledger, pipeline }, fragment)
+        .then(seeTopics)
+        .catch((err) => console.error('[aperture] capture failed:', err));
       return;
     }
     buffer.add(session?.id ?? channel, fragment);
@@ -257,6 +285,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
                 acquisitionAudience: session.audience,
               },
             );
+            seeTopics(result);
             if ('gated' in result) return text(`not distilled (${result.gated})`);
             if (!result.ingest.ok) return text('rejected (entailment invariant)');
             if ('skipped' in result.ingest) return text(`skipped (${result.ingest.skipped})`);
@@ -295,7 +324,7 @@ function makeEmbedder(cfg?: EndpointConfig): Embedder {
 }
 
 /** OpenAI-compatible distillation LLM from plugin config (env fallback); degrades to skip. */
-function makeGenerator(cfg?: EndpointConfig): LayerGenerator {
+function makeGenerator(cfg?: EndpointConfig, topicTaxonomy?: string[]): LayerGenerator {
   const base = cfg?.baseUrl ?? process.env.APERTURE_LLM_BASE_URL;
   const key = cfg?.apiKey ?? process.env.APERTURE_LLM_API_KEY;
   const model = cfg?.model ?? process.env.APERTURE_LLM_MODEL;
@@ -326,7 +355,7 @@ function makeGenerator(cfg?: EndpointConfig): LayerGenerator {
       return body.choices[0]!.message.content;
     },
   };
-  return new LlmLayerGenerator(client);
+  return new LlmLayerGenerator(client, topicTaxonomy);
 }
 
 // Mirrors openclaw.plugin.json (the manifest is the validation authority; this
@@ -353,6 +382,7 @@ const CONFIG_SCHEMA = {
     ownerId: { type: 'string' },
     ownerExternalIds: { type: 'object', additionalProperties: { type: 'string' } },
     topics: { type: 'array', items: { type: 'string' } },
+    topicTaxonomy: { type: 'array', items: { type: 'string' } },
     debounceMs: { type: 'number' },
     llm: ENDPOINT_SCHEMA,
     embed: ENDPOINT_SCHEMA,
@@ -371,6 +401,7 @@ export default definePluginEntry({
       ownerId?: string;
       ownerExternalIds?: Record<string, string>;
       topics?: string[];
+      topicTaxonomy?: string[];
       debounceMs?: number;
       llm?: EndpointConfig;
       embed?: EndpointConfig;
@@ -399,9 +430,10 @@ export default definePluginEntry({
       db: openDatabase(cfg.dbPath),
       ownerId: cfg.ownerId,
       ownerExternalIds: cfg.ownerExternalIds,
-      generator: makeGenerator(cfg.llm),
+      generator: makeGenerator(cfg.llm, cfg.topicTaxonomy),
       embedder: makeEmbedder(cfg.embed),
       topics: cfg.topics,
+      topicTaxonomy: cfg.topicTaxonomy,
       debounceMs: cfg.debounceMs,
       notifyOwner,
     });

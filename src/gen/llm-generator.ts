@@ -1,5 +1,5 @@
 import type { LadderViolation } from '../core/entail.js';
-import type { LayerDraft, LayerGenerator, RawEvent, SkipDecision } from '../core/ingest.js';
+import type { GeneratedLadder, LayerDraft, LayerGenerator, RawEvent, SkipDecision } from '../core/ingest.js';
 
 /**
  * The only thing a provider must implement. No vendor SDKs in core — the
@@ -54,6 +54,32 @@ Return ONLY JSON, either:
 or:
   {"layers": [{"level": 1, "text": "...", "entities": ["..."]}, ...]}`;
 
+/** Hierarchical topic path: "work" or "work/alpha". */
+const TOPIC_PATH = /^[a-z0-9-]+(\/[a-z0-9-]+)*$/;
+
+/** Appended to the system prompt when the owner configured a topic taxonomy. */
+function topicSection(taxonomy: string[]): string {
+  return `## Step 3 — Tag topics (only when distilling)
+Pick 1 to 3 topics from the owner's controlled vocabulary (hierarchical
+paths, "/" nests a subtopic under its parent):
+${taxonomy.join(', ')}
+Only if none fits, propose ONE new path nested under an existing path
+(e.g. "work/gamma" under "work"); it must match [a-z0-9-]+(/[a-z0-9-]+)*.
+Add the tags to the JSON: {"topics": ["work/alpha"], "layers": [...]}`;
+}
+
+/**
+ * Topic gate at the parse boundary: only well-formed hierarchical paths
+ * survive. The model spoke but said nothing usable → 'general' (a topic with
+ * no grants unless the owner signed some — the safe floor). Absent entirely →
+ * undefined, so the caller's suggestion stands.
+ */
+function parseTopics(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const valid = raw.filter((t): t is string => typeof t === 'string' && TOPIC_PATH.test(t)).slice(0, 3);
+  return valid.length > 0 ? valid : ['general'];
+}
+
 function renderUser(event: RawEvent, feedback?: LadderViolation[]): string {
   let user = `Episode from ${event.source.channel} at ${event.source.ts}:
 Speaker: ${event.source.who}
@@ -77,10 +103,24 @@ ${event.content}`;
  * the repair loop for free.
  */
 export class LlmLayerGenerator implements LayerGenerator {
-  constructor(private readonly client: LlmClient) {}
+  private readonly system: string;
 
-  async generate(event: RawEvent, feedback?: LadderViolation[]): Promise<LayerDraft[] | SkipDecision> {
-    const raw = await this.client.completeJson(SYSTEM_PROMPT, renderUser(event, feedback));
+  constructor(
+    private readonly client: LlmClient,
+    /** Owner's controlled topic vocabulary; absent = no topic tagging asked. */
+    topicTaxonomy?: string[],
+  ) {
+    this.system =
+      topicTaxonomy && topicTaxonomy.length > 0
+        ? `${SYSTEM_PROMPT}\n\n${topicSection(topicTaxonomy)}`
+        : SYSTEM_PROMPT;
+  }
+
+  async generate(
+    event: RawEvent,
+    feedback?: LadderViolation[],
+  ): Promise<GeneratedLadder | LayerDraft[] | SkipDecision> {
+    const raw = await this.client.completeJson(this.system, renderUser(event, feedback));
 
     let parsed: unknown;
     try {
@@ -118,6 +158,7 @@ export class LlmLayerGenerator implements LayerGenerator {
         entities: l.entities.filter((e): e is string => typeof e === 'string' && e.trim().length > 0),
       });
     }
-    return drafts;
+    const topics = parseTopics((parsed as { topics?: unknown }).topics);
+    return topics ? { layers: drafts, topics } : drafts;
   }
 }

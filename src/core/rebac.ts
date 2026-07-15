@@ -131,9 +131,24 @@ function widest(
 }
 
 /**
+ * A hierarchical topic path and every ancestor prefix, leaf first:
+ * "work/alpha" → ["work/alpha", "work"]. Evaluated at read time, so the
+ * hierarchy applies to old atoms too.
+ */
+export function topicAncestors(topic: string): string[] {
+  const parts = topic.split('/');
+  const out: string[] = [];
+  for (let i = parts.length; i >= 1; i--) out.push(parts.slice(0, i).join('/'));
+  return out;
+}
+
+/**
  * Effective resolution of a viewer on an atom: the max of any direct
- * per-atom grant and the grants on each of the atom's topics. The policy
- * matrix (tier × topic → max_layer) is nothing but topic tuples.
+ * per-atom grant and the grants on each of the atom's topics — where a
+ * topic is checked along its whole ancestor path (a coarse grant on
+ * "work" covers "work/alpha"; a grant on "work/alpha" never climbs to
+ * "work"). The policy matrix (tier × topic → max_layer) is nothing but
+ * topic tuples.
  */
 export function resolutionForAtom(
   db: Database.Database,
@@ -153,8 +168,10 @@ export function resolutionForAtom(
 
   let best = cachedCheck(`atom:${atom.id}`);
   for (const t of atom.topics) {
-    if (best === 4) break;
-    best = Math.max(best, cachedCheck(`topic:${t}`));
+    for (const ancestor of topicAncestors(t)) {
+      if (best === 4) break;
+      best = Math.max(best, cachedCheck(`topic:${ancestor}`));
+    }
   }
   return best;
 }

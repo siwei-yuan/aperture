@@ -54,6 +54,14 @@ export function promotionNotice(s: PromotionSuggestion): string {
   );
 }
 
+/** Push text when distillation proposed a topic outside the taxonomy. Zero grants until the owner signs some. */
+export function newTopicNotice(topic: string): string {
+  return (
+    `🏷️ new topic discovered: ${topic} (no grants — no one sees it)\n` +
+    `sign it in the UI, or: aperture grant topic:${topic} viewer tier:friend#member 3`
+  );
+}
+
 /** Push text for a first-time sender. Zero-resolution until the owner acts. */
 export function newContactNotice(platform: string, externalId: string): string {
   return (

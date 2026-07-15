@@ -32,6 +32,12 @@
           "type": "string"
         }
       },
+      "topicTaxonomy": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
       "debounceMs": {
         "type": "number"
       },

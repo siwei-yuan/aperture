@@ -30,12 +30,22 @@ export interface SkipDecision {
   reason: string;
 }
 
+/** Distillation output: the ladder, plus the distiller's own topic tags (which beat the caller's suggestion). */
+export interface GeneratedLadder {
+  layers: LayerDraft[];
+  topics?: string[];
+}
+
 /**
  * LLM-backed in production; deterministic fake in tests. `feedback` carries
- * entailment violations from the previous attempt (the repair loop).
+ * entailment violations from the previous attempt (the repair loop). A bare
+ * `LayerDraft[]` is accepted as a ladder without topics.
  */
 export interface LayerGenerator {
-  generate(event: RawEvent, feedback?: LadderViolation[]): Promise<LayerDraft[] | SkipDecision>;
+  generate(
+    event: RawEvent,
+    feedback?: LadderViolation[],
+  ): Promise<GeneratedLadder | LayerDraft[] | SkipDecision>;
 }
 
 /**
@@ -85,13 +95,14 @@ export class IngestPipeline {
 
     for (let attempt = 0; attempt <= MAX_REPAIR_RETRIES; attempt++) {
       const generated = await this.generator.generate(event, feedback);
-      if (!Array.isArray(generated)) {
+      if (!Array.isArray(generated) && 'skip' in generated) {
         // Salience skip: nothing stored, no event — recoverable by replaying
         // the raw ingress stream with a better generator.
         return { ok: true, skipped: generated.reason };
       }
 
-      const layers = generated.map((d) => ({ level: d.level, text: d.text, entities: d.entities }));
+      const gen: GeneratedLadder = Array.isArray(generated) ? { layers: generated } : generated;
+      const layers = gen.layers.map((d) => ({ level: d.level, text: d.text, entities: d.entities }));
       const check = validateLadder(layers);
       const violations = [...check.violations];
 
@@ -123,7 +134,8 @@ export class IngestPipeline {
           source: event.source,
           acquisitionContext: event.acquisitionContext,
           acquisitionAudience,
-          topics: event.topics,
+          // The distiller read the content; the caller only guessed. Its tags win.
+          topics: gen.topics && gen.topics.length > 0 ? gen.topics : event.topics,
           layers,
           scope: event.source.who === this.ownerId ? 'global' : 'local',
         };
