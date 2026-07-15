@@ -2,7 +2,7 @@
 
 **Disclosure control for personal AI agents.** Your agent remembers everything about you — and now anyone can message it. Aperture decides *who gets to know what*, structurally, before the model ever sees the question.
 
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen) ![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen) ![Tests](https://img.shields.io/badge/tests-177%20passing-brightgreen)
 
 ```text
 $ npm run demo
@@ -96,6 +96,9 @@ is lost: the fragments are already on the ledger and can be re-distilled by repl
  ③  DISTILL — one LLM call                       (the only model in the write path)
       draft the L1..L4 generalization ladder, or decide the
       content isn't worth remembering ({"skip": "filler"})
+      tag 1-3 topics from your taxonomy (hierarchical paths like
+        "work/alpha"); a proposed NEW topic has zero grants — invisible
+        until you sign one — and is announced to you exactly once
       │
       ▼
  ④  VALIDATE — the model is never trusted        validateLadder()
@@ -130,9 +133,15 @@ is lost: the fragments are already on the ledger and can be re-distilled by repl
         become fresh person nodes with resolution 0 — deny by default)
       session = this conversation's audience (group = every member)
       ceiling = min over audience of ReBAC check (max over the atom's
-        topics, widest-path over tiers, attenuated by min along the path)
-        × the session's task scope
+        topics along their ancestor paths — a grant on "work" covers
+        "work/alpha" — widest-path over tiers, min-attenuated per path)
       per-layer exact vector search — ONLY inside the permitted partition
+      SCOPE — the conversation's topic allowlist (see below)
+        in scope        ─► stays a candidate
+        out, ordinary   ─► scope auto-widens to the topics the query is
+                           about (ledger: scope.widened) — effective now
+        out, sensitive  ─► withheld; the owner gets a one-time
+                           /aperture allow prompt (ledger: scope.requested)
       top-k permitted layers injected as <aperture-memory> context
       ledger: disclosure.adjudicated (what was shown, to whom, why)
       │
@@ -171,6 +180,26 @@ how you reject poison someone tried to plant about you), or ignore it
 (stays room-local forever). Approval collapses from "every message" to
 "only the facts other rooms actually ask about".
 
+### Topic scope: a conversation earns the topics it asks about
+
+ReBAC answers "may this person ever see this"; the session's topic scope
+answers "does this conversation need it now". A new non-owner conversation
+starts with an EMPTY allowlist. On each retrieval, the topics of top-ranked
+hits the person is ReBAC-cleared for but the scope withholds are the query's
+inferred topics — inference never touches unpermitted atoms. Ordinary topics
+auto-widen the scope (`scope.widened` on the ledger, effective the same
+call), so the machinery is invisible in the common case. Topics listed in
+`sensitiveTopics` (subtrees included: `health` covers `health/mental`) never
+auto-open — you get a one-time prompt instead:
+
+```text
+conversation telegram:dm:mom_tg wants to enter the "health" topic (sensitive — held back)
+/aperture allow telegram:dm:mom_tg health to let it in · ignoring keeps it out
+```
+
+Your own DMs are never scope-limited — need-to-know friction is for other
+people, not for you against yourself.
+
 Every step in both flows is an event on one append-only, hash-chained ledger. The atom
 store, ACL tuples, vector index, and knowledge graph are *projections* — deletable and
 rebuildable by replay (`rebuildProjections`). "Who learned what about me, and when?"
@@ -201,6 +230,10 @@ Add to `~/.openclaw/openclaw.json`:
           ownerId: "person:owner",
           // your own platform ids, so YOUR messages land global, not room-local:
           ownerExternalIds: { telegram: "123456789" },
+          // controlled topic vocabulary for the distiller (hierarchical paths):
+          topicTaxonomy: ["daily", "schedule", "social", "work", "health"],
+          // topics (and their subtrees) a conversation enters only with your signature:
+          sensitiveTopics: ["health"],
           // distillation LLM — any OpenAI-compatible endpoint:
           llm:   { baseUrl: "https://api.openai.com/v1", apiKey: "sk-...", model: "gpt-5-mini" },
           // embeddings — any OpenAI-compatible endpoint (local works great):
@@ -304,6 +337,7 @@ aperture --db <path> promote <atomId>           # lift into the global profile
 aperture --db <path> seal <atomId>              # reject (visible nowhere, ledgered)
 aperture --db <path> grant <obj> viewer <subj> <0-4>
 aperture --db <path> revoke <obj> viewer <subj>
+aperture --db <path> allow <sessionId> <topic>  # let a session enter a sensitive topic
 aperture --db <path> check person:bob topic:health
 aperture --db <path> disclosures --viewer person:bob   # what Bob has learned
 aperture --db <path> verify                     # verify the ledger hash chain
@@ -372,7 +406,7 @@ model hallucinates it, and fully auditable afterwards.
 
 ## Status
 
-Core complete (M0–M6) plus a live-validated OpenClaw binding. 153 invariant tests, two
+Core complete (M0–M6) plus a live-validated OpenClaw binding. 177 invariant tests, two
 runnable demos, real Telegram traffic through all three defense lines. Before trusting
 it with real secrets:
 
@@ -400,7 +434,7 @@ it with real secrets:
 
 ```bash
 npm install
-npm test          # 153 invariant tests (business logic only, no schema tests)
+npm test          # 177 invariant tests (business logic only, no schema tests)
 npm run typecheck
 ```
 
