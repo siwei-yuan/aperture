@@ -87,10 +87,16 @@ export function linkIdentity(
  * One session per audience container (a DM peer, a group chat). The id is
  * stable per channel; the audience is refreshed on every call so group
  * membership changes take effect immediately.
+ *
+ * When the caller identifies the owner, new non-owner sessions start with an
+ * EMPTY topic allowlist — need-to-know by default; the first retrieval
+ * auto-widens to the query's inferred topics (see the scope driver in
+ * retrieve). The owner's own sessions, and callers that pass no ownerId,
+ * keep the legacy unscoped default.
  */
 export function sessionFor(
   db: Database.Database,
-  req: { platform: string; channel: string; peerExternalIds: string[] },
+  req: { platform: string; channel: string; peerExternalIds: string[]; ownerId?: string },
 ): Session {
   ensureSessionTables(db);
   const audience = [...new Set(req.peerExternalIds.map((x) => resolveIdentity(db, req.platform, x)))].sort();
@@ -101,12 +107,15 @@ export function sessionFor(
     | undefined;
 
   if (!existing) {
-    db.prepare('INSERT INTO sessions (id, channel, audience, scope) VALUES (?, ?, ?, NULL)').run(
+    const ownerAlone = audience.length === 1 && audience[0] === req.ownerId;
+    const scope = req.ownerId === undefined || ownerAlone ? null : [];
+    db.prepare('INSERT INTO sessions (id, channel, audience, scope) VALUES (?, ?, ?, ?)').run(
       id,
       req.channel,
       JSON.stringify(audience),
+      scope === null ? null : JSON.stringify(scope),
     );
-    return { id, audience, scope: null };
+    return { id, audience, scope };
   }
 
   db.prepare('UPDATE sessions SET audience = ? WHERE id = ?').run(JSON.stringify(audience), id);

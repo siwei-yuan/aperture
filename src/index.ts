@@ -46,7 +46,7 @@ export type { LlmClient } from './gen/llm-generator.js';
 
 // Retrieval (adjudication)
 export { retrieve, retrieveForSession } from './core/retrieve.js';
-export type { PromotionSuggestion, RetrieveDeps, RetrievedItem, RetrieveRequest } from './core/retrieve.js';
+export type { PromotionSuggestion, RetrieveDeps, RetrievedItem, RetrieveRequest, ScopeBlock } from './core/retrieve.js';
 
 // Mosaic tracking (cumulative disclosure projection + budgets)
 export { applyMosaicBudget, disclosureProfile } from './core/disclosure-profile.js';

@@ -89,7 +89,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
   const ledger = new Ledger(db);
   const vectors = new VectorStore(db, config.embedder ?? hashEmbedder(64));
   const pipeline = new IngestPipeline({ store, ledger, ownerId, generator: config.generator, vectors });
-  const membrane = { db, ledger, store, vectors };
+  const membrane = { db, ledger, store, vectors, ownerId };
   const topics = config.topics ?? ['general'];
 
   for (const [platform, externalId] of Object.entries(config.ownerExternalIds ?? {})) {
@@ -148,6 +148,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
       platform,
       channel: ctx.channelId ?? ctx.chatId ?? ctx.sessionKey ?? 'unknown',
       peerExternalIds: [peer],
+      ownerId,
     });
     const res = await retrieveForSession(membrane, { sessionId: session.id, query: event.prompt });
     // Demand-driven promotion: another room wanted a local atom — the owner
@@ -209,6 +210,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
           platform,
           channel: ctx.channelId ?? ctx.chatId ?? ctx.sessionKey ?? 'unknown',
           peerExternalIds: [externalId],
+          ownerId,
         })
       : undefined;
     const fragment = {
@@ -256,7 +258,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
           description: 'Search memories permitted for the people in this conversation.',
           parameters: Type.Object({ query: Type.String({ description: 'What to search for' }) }),
           execute: async (_id, params) => {
-            const session = sessionFor(db, { platform, channel, peerExternalIds: peer ? [peer] : [] });
+            const session = sessionFor(db, { platform, channel, peerExternalIds: peer ? [peer] : [], ownerId });
             const query = String((params as { query?: unknown }).query ?? '');
             const res = await retrieveForSession(membrane, { sessionId: session.id, query });
             return text(
@@ -273,7 +275,7 @@ export function registerAperture(api: ApertureHostApi, config: ApertureDeps): vo
           parameters: Type.Object({ content: Type.String({ description: 'The episode to remember' }) }),
           execute: async (_id, params) => {
             const who = resolveIdentity(db, platform, peer ?? 'unknown');
-            const session = sessionFor(db, { platform, channel, peerExternalIds: peer ? [peer] : [] });
+            const session = sessionFor(db, { platform, channel, peerExternalIds: peer ? [peer] : [], ownerId });
             const result = await capture(
               { db, ledger, pipeline },
               {
