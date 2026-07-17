@@ -386,6 +386,35 @@ describe('http server: auth and pass-through', () => {
     expect([...deps.ledger.events()].at(-1)!.type).toBe('acl.revoked');
   });
 
+  it('tier policy edit lifecycle: grant, regrade (upsert), revoke falls back to derived', async () => {
+    // nested tier: inner derives from outer, so the revoke has somewhere to fall
+    deps.acl.grant({ object: 'tier:inner', relation: 'member', subject: 'person:carol', resolution: 4 });
+    deps.acl.grant({ object: 'tier:outer', relation: 'member', subject: 'tier:inner#member', resolution: 4 });
+    deps.acl.grant({ object: 'topic:health', relation: 'viewer', subject: 'tier:outer#member', resolution: 1 });
+
+    const send = (path: string, body: unknown) =>
+      api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+    // the ring panel's SET L3: one grant tuple
+    await send('/api/grant', { object: 'topic:health', relation: 'viewer', subject: 'tier:inner#member', resolution: 3 });
+    let cell = buildState(deps).matrix.tierRows.find((r) => r.tier === 'inner')!.cells['health']!;
+    expect(cell).toMatchObject({ explicit: 3, effective: 3 });
+
+    // clicking another segment regrades in place (same tuple key, upsert)
+    await send('/api/grant', { object: 'topic:health', relation: 'viewer', subject: 'tier:inner#member', resolution: 2 });
+    cell = buildState(deps).matrix.tierRows.find((r) => r.tier === 'inner')!.cells['health']!;
+    expect(cell).toMatchObject({ explicit: 2, effective: 2 });
+
+    // clicking the lit level clears: explicit gone, evaluator's derived value shows through
+    await send('/api/revoke', { object: 'topic:health', relation: 'viewer', subject: 'tier:inner#member' });
+    cell = buildState(deps).matrix.tierRows.find((r) => r.tier === 'inner')!.cells['health']!;
+    expect(cell).toMatchObject({ explicit: null, effective: 1 });
+
+    // every step is on the ledger, chain intact
+    expect([...deps.ledger.events()].filter((e) => e.type.startsWith('acl.'))).toHaveLength(6);
+    expect(deps.ledger.verify()).toEqual({ ok: true });
+  });
+
   it('promote passes through owner-signed and flips scope', async () => {
     deps.store.insert(atom('local1', ['general'], 2, 'local'));
     const res = await api('/api/promote', {

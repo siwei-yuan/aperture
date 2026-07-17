@@ -111,35 +111,20 @@ button.linkish { border: none; background: none; color: var(--accent); cursor: p
 .gauge i.on { background: var(--accent); border-color: var(--accent); }
 .gauge.steel i.on { background: var(--steel); border-color: var(--steel); }
 
-/* matrix */
-table.matrix { border-collapse: collapse; background: var(--panel); }
-table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 0; }
-table.matrix th { background: var(--well); font-weight: 700; padding: 6px 10px; text-align: left;
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-table.matrix th .cnt { display: block; font-size: 10px; color: var(--muted); font-weight: 400; letter-spacing: 0.04em; }
-table.matrix th.rowhead { position: sticky; left: 0; z-index: 1; min-width: 180px; }
-table.matrix th.rowhead .sub { display: block; font-size: 10px; color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0.02em; }
-td.cell { width: 84px; height: 44px; text-align: center; cursor: pointer; position: relative; }
-td.cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
-td.cell .v { display: block; font-size: 13px; font-weight: 700; line-height: 1.1; margin-top: 4px; }
-td.cell.derived .v { color: var(--muted); font-weight: 400; }
-td.cell.derived { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(139,154,163,0.10) 6px 7px); }
-td.cell.derived::after { content: "DRV"; position: absolute; top: 2px; right: 3px; font-size: 8px; color: var(--steel); letter-spacing: 0.05em; }
-td.cell.blank .v { color: var(--line); }
-tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: var(--muted);
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
-#ctxmenu { position: absolute; display: none; background: var(--panel); border: 1px solid var(--ink);
-  padding: 2px; z-index: 100; min-width: 210px; }
-#ctxmenu button { display: block; width: 100%; text-align: left; border: none; background: none; font: inherit;
-  font-size: 12px; padding: 5px 10px; cursor: pointer; }
-#ctxmenu button:hover { background: var(--accent); color: var(--bone); }
-#ctxmenu .note { padding: 6px 10px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line); margin-top: 2px; }
+/* policy rows (circles drawer): topic name + clickable gauge + value tag */
+.prow { display: flex; align-items: center; gap: 10px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.prow .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.prow .ptag { font-size: 11px; font-weight: 700; min-width: 52px; text-align: right; }
+.prow.mini { padding: 2px 2px; border-bottom: none; }
+.prow.mini .pname { font-size: 11px; color: var(--muted); }
+.pgauge i { width: 14px; height: 14px; cursor: pointer; }
+.pgauge i:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+.warnline { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
 
-/* audit */
-#audit { margin-top: 16px; }
-#audit .people { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-#audit label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); font-size: 12px; cursor: pointer; }
-#audit input[type=checkbox] { accent-color: var(--accent); }
+/* overview blocks (no selection): tier × topic mini array */
+.ovtier { border: 1px solid var(--line); background: var(--well); padding: 6px 10px; margin-top: 8px; cursor: pointer; }
+.ovtier:hover { border-color: var(--accent); }
+.ovtier .ovname { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; margin-bottom: 2px; }
 
 /* reverse view */
 .stats { display: flex; gap: 12px; margin: 12px 0 16px; }
@@ -179,7 +164,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
 #drawer td { border-bottom: 1px solid var(--line); padding: 3px 6px 3px 0; }
 .diff { margin: 8px 0; border: 1px solid var(--ink); background: var(--well); padding: 26px 12px 10px; }
 /* ::after, not ::before — .cut owns ::before for the corner-cut diagonal */
-.diff::after { content: "AUTHORIZATION // TIER MOVE"; position: absolute; top: 8px; left: 12px;
+.diff::after { content: attr(data-directive); position: absolute; top: 8px; left: 12px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent); }
 .diff .row { display: flex; justify-content: space-between; font-size: 12px; }
 .diff .up { color: var(--accent); font-weight: 700; }
@@ -232,8 +217,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
     <div id="stamp">DISCLOSURE CONTROL &middot; SYS 0.1.0 &middot; LOCAL LINK</div>
   </div>
   <nav>
-    <button data-view="circles">Circles</button>
-    <button data-view="matrix" class="active">Matrix</button>
+    <button data-view="circles" class="active">Circles</button>
     <button data-view="knowledge">Knowledge</button>
     <button data-view="reverse">Disclosures</button>
   </nav>
@@ -241,7 +225,6 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
 </header>
 <div id="banner"></div>
 <main><div id="view"></div></main>
-<div id="ctxmenu"></div>
 <footer>
   <span>APERTURE OWNER CONSOLE</span>
   <span id="telemetry">LINK 127.0.0.1 LOCAL ONLY &middot; AWAITING LEDGER</span>
@@ -254,12 +237,11 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
   var token = parseTokenFromHash(location.hash);
   var state = null;
   var headSeq = -1;
-  var currentView = 'matrix';
+  var currentView = 'circles';
   var reversePerson = null;   // preselected person for the reverse view
   var selectedNode = null;    // circles: selected person
+  var selectedRing = null;    // circles: selected tier (policy panel)
   var draftTiers = [];        // circles: named-but-empty tiers (client-side until first member)
-  var pendingException = null; // matrix: person picked for a not-yet-explicit exception row
-  var auditChecks = {};       // matrix audit mode selections
   var expandedAtoms = {};     // reverse view ladder expansion
   var kTopic = null;          // knowledge: selected topic subtree
   var kScope = '';            // knowledge: scope filter ('' = all)
@@ -349,7 +331,6 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
   function render() {
     var root = document.getElementById('view');
     root.textContent = '';
-    hideMenu();
     if (!state) {
       // never a silent blank view: say why there is nothing to show
       root.appendChild(el('div', { class: 'muted', text: token
@@ -357,173 +338,79 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
         : 'No token in the URL. Open the exact URL printed by aperture-ui — it ends with #t=<token>.' }));
       return;
     }
-    if (currentView === 'matrix') renderMatrix(root);
-    else if (currentView === 'reverse') renderReverse(root);
+    if (currentView === 'reverse') renderReverse(root);
     else if (currentView === 'knowledge') renderKnowledge(root);
     else renderCircles(root);
   }
 
-  // ---- view B: policy matrix ------------------------------------------------
+  // ---- policy editing (lives in the circles drawer) ---------------------------
 
-  function cellTd(cell, object, subject, ownerRow) {
+  /* interactive 4-segment gauge: click segment N to stage SET L<N>;
+     clicking the current explicit level stages the revoke (back to derived/L0) */
+  function policyGauge(cell, onPick) {
     var explicit = cell.explicit !== null;
     var v = explicit ? cell.explicit : cell.effective;
-    var td = el('td', { class: 'cell r' + v + (explicit ? '' : ' derived') + (v === 0 && !explicit ? ' blank' : '') }, [
-      el('span', { class: 'v', text: (!explicit && cell.effective === 0) ? '\\u00b7' : String(v) }),
-      gauge(v, !explicit),
-    ]);
-    var tip = explicit ? 'explicit tuple = ' + v
-      : cell.effective > 0 ? 'derived' + (cell.derivedFrom ? ' — inherited from ' + cell.derivedFrom : '') + ' = ' + v
-      : 'no policy (default deny)';
-    td.title = tip + ' — click to change, right-click for options';
-
-    td.addEventListener('click', function () {
-      if (explicit) {
-        post('/api/grant', { object: object, relation: 'viewer', subject: subject, resolution: (cell.explicit + 1) % 5 });
-      } else {
-        var msg = cell.effective > 0
-          ? 'This value is ' + (cell.derivedFrom ? 'inherited from ' + cell.derivedFrom : 'derived') + ' = ' + cell.effective +
-            '. Create an explicit exception for ' + subject + ' on ' + object + '?'
-          : 'No policy here (default deny). Create an explicit tuple ' + object + ' viewer ' + subject + ' = 1?';
-        if (confirm(msg)) {
-          post('/api/grant', { object: object, relation: 'viewer', subject: subject, resolution: cell.effective > 0 ? cell.effective : 1 });
-        }
-      }
-    });
-    td.addEventListener('contextmenu', function (ev) {
-      ev.preventDefault();
-      showMenu(ev.pageX, ev.pageY, object, subject, cell, ownerRow);
-    });
-    return td;
-  }
-
-  function showMenu(x, y, object, subject, cell, ownerRow) {
-    var m = document.getElementById('ctxmenu');
-    m.textContent = '';
-    for (var i = 0; i <= 4; i++) (function (r) {
-      m.appendChild(el('button', {
-        text: 'set ' + r + (cell.explicit === r ? '  (current)' : ''),
-        onclick: function () { hideMenu(); post('/api/grant', { object: object, relation: 'viewer', subject: subject, resolution: r }); },
-      }));
+    var g = el('span', { class: 'gauge pgauge' + (explicit ? '' : ' steel') });
+    for (var i = 1; i <= 4; i++) (function (n) {
+      var seg = el('i', { class: n <= v ? 'on' : '' });
+      seg.title = explicit && n === cell.explicit
+        ? 'CLEAR \\u2014 back to ' + (cell.derivedFrom ? 'derived' : 'L0 (default deny)')
+        : 'SET L' + n;
+      seg.addEventListener('click', function (ev) { ev.stopPropagation(); onPick(n); });
+      g.appendChild(seg);
     })(i);
-    if (cell.explicit !== null) {
-      m.appendChild(el('button', {
-        text: 'inherit (revoke explicit tuple)',
-        onclick: function () {
-          hideMenu();
-          if (confirm('Revoke the explicit tuple? The cell falls back to its derived value. Note: past disclosures cannot be recalled — tightening only affects future ones.')) {
-            post('/api/revoke', { object: object, relation: 'viewer', subject: subject });
-          }
-        },
-      }));
-    }
-    var pathNote = cell.explicit !== null
-      ? 'explicit: ' + object + ' viewer ' + subject + ' = ' + cell.explicit
-      : cell.effective > 0
-        ? 'derived = ' + cell.effective + (cell.derivedFrom ? ' via ' + cell.derivedFrom : '')
-        : 'no path — default deny';
-    if (ownerRow) pathNote += ' — row: ' + ownerRow;
-    m.appendChild(el('div', { class: 'note', text: pathNote }));
-    m.style.left = x + 'px'; m.style.top = y + 'px'; m.style.display = 'block';
-  }
-  function hideMenu() { document.getElementById('ctxmenu').style.display = 'none'; }
-  document.addEventListener('click', function (ev) { if (!document.getElementById('ctxmenu').contains(ev.target)) hideMenu(); });
-
-  function renderMatrix(root) {
-    var topics = state.topics;
-    root.appendChild(el('h2', { text: 'PANEL 02 \\u2014 POLICY MATRIX' }));
-    root.appendChild(el('div', { class: 'notice', text: 'Solid cells are explicit tuples (click cycles 0→4). Hollow cells with a corner mark are derived by the evaluator — clicking asks before creating an exception. Tightening never recalls what was already disclosed.' }));
-
-    var thead = el('tr', {}, [el('th', { class: 'rowhead', text: '' })].concat(topics.map(function (t) {
-      var th = el('th', {}, [document.createTextNode(t.name), el('span', { class: 'cnt', text: t.atomCount + ' atom' + (t.atomCount === 1 ? '' : 's') })]);
-      return th;
-    })));
-    var table = el('table', { class: 'matrix' }, [thead]);
-
-    state.matrix.tierRows.forEach(function (row) {
-      var tr = el('tr', {}, [el('th', { class: 'rowhead', text: 'tier:' + row.tier })]);
-      topics.forEach(function (t) { tr.appendChild(cellTd(row.cells[t.name], 'topic:' + t.name, 'tier:' + row.tier + '#member', 'tier:' + row.tier)); });
-      table.appendChild(tr);
-    });
-
-    table.appendChild(el('tr', { class: 'sep' }, [el('td', { colspan: String(topics.length + 1), text: 'per-person exceptions' })]));
-
-    var personRows = state.matrix.personRows.slice();
-    if (pendingException && !personRows.some(function (r) { return r.personId === pendingException; })) {
-      var cells = {};
-      topics.forEach(function (t) { cells[t.name] = { explicit: null, effective: 0, derivedFrom: null }; });
-      personRows.push({ personId: pendingException, tiers: [], cells: cells, pending: true });
-    }
-    personRows.forEach(function (row) {
-      var head = el('th', { class: 'rowhead' }, [
-        document.createTextNode(personLabel(row.personId)),
-        el('span', { class: 'sub', text: row.tiers.length ? 'in: ' + row.tiers.join(', ') : (row.pending ? 'new exception row — click a cell to sign the first tuple' : 'no tiers') }),
-      ]);
-      var tr = el('tr', {}, [head]);
-      topics.forEach(function (t) { tr.appendChild(cellTd(row.cells[t.name], 'topic:' + t.name, row.personId, personLabel(row.personId))); });
-      table.appendChild(tr);
-    });
-
-    root.appendChild(table);
-
-    // add-exception picker
-    var candidates = state.people.filter(function (p) {
-      return !state.matrix.personRows.some(function (r) { return r.personId === p.personId; });
-    });
-    if (candidates.length) {
-      var sel = el('select', {}, [el('option', { value: '', text: '+ add per-person exception…' })].concat(
-        candidates.map(function (p) { return el('option', { value: p.personId, text: personLabel(p.personId) + '  (' + p.personId + ')' }); })
-      ));
-      sel.addEventListener('change', function () { if (sel.value) { pendingException = sel.value; render(); } });
-      root.appendChild(el('div', { style: 'margin-top:10px' }, [sel]));
-    }
-
-    // audit mode
-    var audit = el('div', { id: 'audit' });
-    audit.appendChild(el('h2', { text: 'AUDIT MODE \\u2014 EFFECTIVE EXPOSURE' }));
-    var picker = el('div', { class: 'people' });
-    state.people.forEach(function (p) {
-      if (p.isOwner) return;
-      var cb = el('input', { type: 'checkbox' });
-      cb.checked = !!auditChecks[p.personId];
-      cb.addEventListener('change', function () { auditChecks[p.personId] = cb.checked; renderAudit(); });
-      picker.appendChild(el('label', {}, [cb, document.createTextNode(personLabel(p.personId))]));
-    });
-    audit.appendChild(picker);
-    audit.appendChild(el('div', { id: 'audit-out' }));
-    root.appendChild(audit);
-    renderAudit();
+    return g;
   }
 
-  function renderAudit() {
-    var out = document.getElementById('audit-out');
-    if (!out) return;
-    out.textContent = '';
-    var chosen = Object.keys(auditChecks).filter(function (p) { return auditChecks[p]; });
-    if (!chosen.length) { out.appendChild(el('div', { class: 'muted', text: 'Select people to see their effective row (several = the group-chat ceiling, min per topic).' })); return; }
-    Promise.all(chosen.map(function (p) { return api('/api/effective?person=' + encodeURIComponent(p)); })).then(function (rows) {
-      var topics = state.topics.map(function (t) { return t.name; });
-      var table = el('table', { class: 'matrix' }, [
-        el('tr', {}, [el('th', { class: 'rowhead', text: '' })].concat(topics.map(function (t) { return el('th', { text: t }); }))),
-      ]);
-      chosen.forEach(function (p, i) {
-        var tr = el('tr', {}, [el('th', { class: 'rowhead', text: personLabel(p) })]);
-        topics.forEach(function (t) {
-          var v = rows[i][t] || 0;
-          tr.appendChild(el('td', { class: 'cell r' + v }, [el('span', { class: 'v', text: String(v) }), gauge(v, true)]));
-        });
-        table.appendChild(tr);
-      });
-      if (chosen.length > 1) {
-        var tr = el('tr', {}, [el('th', { class: 'rowhead', text: 'group ceiling (min)' })]);
-        topics.forEach(function (t) {
-          var v = Math.min.apply(null, rows.map(function (r) { return r[t] || 0; }));
-          tr.appendChild(el('td', { class: 'cell r' + v }, [el('span', { class: 'v', text: String(v) }), gauge(v, false)]));
-        });
-        table.appendChild(tr);
+  /* an AUTHORIZATION card: the exact tuples about to hit the ledger, SIGN / ABORT */
+  function directiveCard(box, title, lines, op) {
+    box.textContent = '';
+    var card = el('div', { class: 'diff cut', 'data-directive': title });
+    lines.forEach(function (l) { card.appendChild(el('div', { class: l.warn ? 'warnline' : 'muted', text: l.text })); });
+    var sign = el('button', { class: 'act', text: 'SIGN' });
+    sign.addEventListener('click', function () { post(op.path, op.body); });
+    var abort = el('button', { class: 'ghost', text: 'ABORT', style: 'margin-left:8px' });
+    abort.addEventListener('click', function () { box.textContent = ''; });
+    card.appendChild(el('div', { style: 'margin-top:8px' }, [sign, abort]));
+    box.appendChild(card);
+  }
+
+  /* one topic row: name + clickable gauge + value tag. Shared by the tier
+     panel and the person panel; exceptionNote keeps the old matrix's
+     anti-misedit semantics — touching a derived value warns that it forges
+     a per-person exception before anything is signed. */
+  function policyRow(topic, cell, subject, directiveBox, exceptionNote) {
+    var explicit = cell.explicit !== null;
+    var v = explicit ? cell.explicit : cell.effective;
+    var tag = explicit ? 'L' + v : (cell.effective > 0 ? 'DRV L' + v : '\\u2014');
+    var pick = function (n) {
+      var object = 'topic:' + topic;
+      if (explicit && n === cell.explicit) {
+        directiveCard(directiveBox, 'AUTHORIZATION // POLICY REVOKE', [
+          { text: 'REVOKE ' + object + ' viewer ' + subject },
+          { text: cell.derivedFrom ? 'falls back to derived via ' + cell.derivedFrom : 'falls back to L0 (default deny)' },
+          { text: 'past disclosures cannot be recalled' },
+        ], { path: '/api/revoke', body: { object: object, relation: 'viewer', subject: subject } });
+      } else {
+        var lines = [{ text: 'GRANT ' + object + ' viewer ' + subject + ' = ' + n }];
+        if (exceptionNote && !explicit) {
+          lines.unshift({ warn: true, text: 'CREATES A PER-PERSON EXCEPTION' + (cell.derivedFrom ? ' \\u2014 value now derived from ' + cell.derivedFrom : '') });
+        }
+        directiveCard(directiveBox, 'AUTHORIZATION // POLICY GRANT', lines,
+          { path: '/api/grant', body: { object: object, relation: 'viewer', subject: subject, resolution: n } });
       }
-      out.appendChild(table);
-    });
+    };
+    var row = el('div', { class: 'prow' }, [
+      el('span', { class: 'pname', text: topic }),
+      policyGauge(cell, pick),
+      el('span', { class: 'ptag' + (explicit ? '' : ' muted'), text: tag }),
+    ]);
+    row.title = explicit
+      ? 'explicit tuple = ' + v + ' \\u2014 click a segment to change, click the lit level to clear'
+      : cell.effective > 0
+        ? 'derived = ' + v + (cell.derivedFrom ? ' via ' + cell.derivedFrom : '') + ' \\u2014 click a segment to override'
+        : 'no policy (default deny) \\u2014 click a segment to grant';
+    return row;
   }
 
   // ---- view C: reverse ("what does X know") ----------------------------------
@@ -531,7 +418,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
   var reverseTopicFilter = null;
 
   function renderReverse(root) {
-    root.appendChild(el('h2', { text: 'PANEL 04 \\u2014 DISCLOSURE AUDIT' }));
+    root.appendChild(el('h2', { text: 'PANEL 03 \\u2014 DISCLOSURE AUDIT' }));
     var others = state.people.filter(function (p) { return !p.isOwner; });
     var sel = el('select', {}, [el('option', { value: '', text: 'choose a person…' })].concat(
       others.map(function (p) {
@@ -623,7 +510,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
   // ---- view D: knowledge browser ------------------------------------------------
 
   function renderKnowledge(root) {
-    root.appendChild(el('h2', { text: 'PANEL 03 \\u2014 KNOWLEDGE ARCHIVE' }));
+    root.appendChild(el('h2', { text: 'PANEL 02 \\u2014 KNOWLEDGE ARCHIVE' }));
 
     var params = [];
     if (kScope) params.push('scope=' + encodeURIComponent(kScope));
@@ -760,7 +647,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
     if (a.scope === 'local') {
       var promoteBtn = el('button', { class: 'act', text: 'PROMOTE' });
       promoteBtn.addEventListener('click', function () {
-        if (confirm('SIGN: atom.promoted ' + a.atomId + '\\n\\nIt becomes retrievable everywhere, layer-gated by the matrix.')) {
+        if (confirm('SIGN: atom.promoted ' + a.atomId + '\\n\\nIt becomes retrievable everywhere, layer-gated by tier policy.')) {
           post('/api/promote', { atomId: a.atomId });
         }
       });
@@ -797,8 +684,8 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
   }
 
   function renderCircles(root) {
-    root.appendChild(el('h2', { text: 'PANEL 01 \\u2014 RELATIONSHIP RINGS' }));
-    root.appendChild(el('div', { class: 'notice', text: 'Click a person, then move them between circles from the panel — every move shows its per-topic consequence before you sign it.' }));
+    root.appendChild(el('h2', { text: 'PANEL 01 \\u2014 RELATIONSHIP RINGS & POLICY' }));
+    root.appendChild(el('div', { class: 'notice', text: 'Click a ring to edit that tier\\u2019s per-topic policy; click a person for their exceptions and moves. Every change is staged as an AUTHORIZATION card before it is signed onto the ledger.' }));
 
     var wrap = el('div', { id: 'circles-wrap' });
     var size = 640, cx = size / 2, cy = size / 2;
@@ -815,8 +702,16 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
 
     tierList.forEach(function (t) {
       var isDraft = !state.tiers.some(function (x) { return x.name === t; });
-      svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: ringRadius[t], fill: 'none', stroke: isDraft ? '#b8b4a9' : '#8b9aa3', 'stroke-width': 1, 'stroke-dasharray': isDraft ? '5 4' : 'none' }));
-      var label = svgEl('text', { x: cx, y: cy - ringRadius[t] - 5, 'text-anchor': 'middle', 'font-size': 10, fill: '#6b6f71', 'letter-spacing': '1' });
+      var isSel = selectedRing === t;
+      var pickRing = function () { selectedRing = t; selectedNode = null; render(); };
+      svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: ringRadius[t], fill: 'none',
+        stroke: isSel ? '#e85d04' : (isDraft ? '#b8b4a9' : '#8b9aa3'), 'stroke-width': isSel ? 2.5 : 1,
+        'stroke-dasharray': isDraft ? '5 4' : 'none' }));
+      // fat invisible twin: a 1px stroke is no click target
+      svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: ringRadius[t], fill: 'none', stroke: 'rgba(0,0,0,0)',
+        'stroke-width': 12, 'pointer-events': 'stroke', cursor: 'pointer', onclick: pickRing }));
+      var label = svgEl('text', { x: cx, y: cy - ringRadius[t] - 5, 'text-anchor': 'middle', 'font-size': 10,
+        fill: isSel ? '#e85d04' : '#6b6f71', 'letter-spacing': '1', cursor: 'pointer', onclick: pickRing });
       label.textContent = (t + ' \\u00b7 L' + tierGeneralRes(t) + (isDraft ? ' (EMPTY)' : '')).toUpperCase();
       svg.appendChild(label);
     });
@@ -848,7 +743,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
         // stagger rings so single-member rings don't stack at 12 o'clock (where labels live)
         var angle = (2 * Math.PI * i) / members.length - Math.PI / 2 + (ringIdx + 1) * 0.9;
         var x = cx + r * Math.cos(angle), y = cy + r * Math.sin(angle);
-        var g = svgEl('g', { cursor: 'pointer', onclick: function () { selectedNode = p.personId; render(); } });
+        var g = svgEl('g', { cursor: 'pointer', onclick: function () { selectedNode = p.personId; selectedRing = null; render(); } });
         var isSel = selectedNode === p.personId;
         g.appendChild(svgEl('circle', { cx: x, cy: y, r: 13, fill: key === '(unknown)' ? '#dbd8cf' : '#efede7', stroke: isSel ? '#e85d04' : '#4a4a4e', 'stroke-width': isSel ? 3 : 1 }));
         var initial = svgEl('text', { x: x, y: y + 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#1a1a1c' });
@@ -876,12 +771,68 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
 
   function renderDrawer(tierList) {
     var drawer = el('div', { id: 'drawer', class: 'cut' });
-    if (!selectedNode) {
-      drawer.appendChild(el('div', { class: 'muted', text: 'Select a person on the map.' }));
+    if (selectedRing) return ringPanel(drawer, selectedRing);
+    if (selectedNode) return personPanel(drawer, tierList);
+    return overviewPanel(drawer);
+  }
+
+  /* no selection: the compact tier × topic policy array — the old matrix's
+     at-a-glance view, one click away from any tier's editor */
+  function overviewPanel(drawer) {
+    drawer.appendChild(el('h3', { text: 'POLICY OVERVIEW' }));
+    if (!state.matrix.tierRows.length) {
+      drawer.appendChild(el('div', { class: 'muted', text: 'No tiers yet \\u2014 add a ring and move someone in, or sign a first policy tuple.' }));
       return drawer;
     }
+    drawer.appendChild(el('div', { class: 'muted', text: 'Click a ring on the map \\u2014 or a row here \\u2014 to edit that tier\\u2019s grants.' }));
+    state.matrix.tierRows.forEach(function (row) {
+      var block = el('div', { class: 'ovtier' }, [el('div', { class: 'ovname', text: 'TIER:' + row.tier.toUpperCase() })]);
+      state.topics.forEach(function (t) {
+        var cell = row.cells[t.name] || { explicit: null, effective: 0 };
+        var v = cell.explicit !== null ? cell.explicit : cell.effective;
+        block.appendChild(el('div', { class: 'prow mini' }, [
+          el('span', { class: 'pname', text: t.name }),
+          gauge(v, cell.explicit === null),
+          el('span', { class: 'ptag' + (cell.explicit === null ? ' muted' : ''), text: cell.explicit !== null ? 'L' + v : (v > 0 ? 'DRV L' + v : '\\u2014') }),
+        ]));
+      });
+      block.addEventListener('click', function () { selectedRing = row.tier; selectedNode = null; render(); });
+      drawer.appendChild(block);
+    });
+    if (state.matrix.personRows.length) {
+      drawer.appendChild(el('div', { class: 'muted', style: 'margin-top:8px', text: state.matrix.personRows.length + ' per-person exception' + (state.matrix.personRows.length === 1 ? '' : 's') + ' \\u2014 click the person on the map.' }));
+    }
+    return drawer;
+  }
+
+  /* ring selected: the tier's per-topic policy editor */
+  function ringPanel(drawer, tier) {
+    var row = state.matrix.tierRows.find(function (r) { return r.tier === tier; });
+    var members = (state.tiers.find(function (t) { return t.name === tier; }) || { members: [] }).members;
+    var subject = 'tier:' + tier + '#member';
+
+    drawer.appendChild(el('h3', { text: 'TIER:' + tier.toUpperCase() }));
+    drawer.appendChild(el('div', { class: 'muted', text: subject + ' \\u00b7 ' + members.length + ' member' + (members.length === 1 ? '' : 's') }));
+
+    var directiveBox = el('div');
+    drawer.appendChild(el('h2', { text: 'POLICY \\u2014 TOPIC GRANTS' }));
+    if (!state.topics.length) drawer.appendChild(el('div', { class: 'muted', text: 'no topics yet' }));
+    state.topics.forEach(function (t) {
+      var cell = (row && row.cells[t.name]) || { explicit: null, effective: 0, derivedFrom: null };
+      drawer.appendChild(policyRow(t.name, cell, subject, directiveBox, false));
+    });
+    drawer.appendChild(directiveBox);
+
+    var back = el('button', { class: 'ghost', text: '\\u2190 OVERVIEW', style: 'margin-top:12px' });
+    back.addEventListener('click', function () { selectedRing = null; render(); });
+    drawer.appendChild(el('div', {}, [back]));
+    return drawer;
+  }
+
+  /* person selected: identity, per-topic policy (explicit vs derived), move, audit link */
+  function personPanel(drawer, tierList) {
     var p = state.people.find(function (q) { return q.personId === selectedNode; });
-    if (!p) { selectedNode = null; drawer.appendChild(el('div', { class: 'muted', text: 'Select a person on the map.' })); return drawer; }
+    if (!p) { selectedNode = null; return overviewPanel(drawer); }
 
     drawer.appendChild(el('h3', { text: personLabel(p.personId) }));
     drawer.appendChild(el('div', { class: 'muted', text: p.personId }));
@@ -891,17 +842,20 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
     if (p.aliases.length) drawer.appendChild(t);
     drawer.appendChild(el('div', { text: p.tiers.length ? 'circles: ' + p.tiers.join(', ') : 'in no circle (sees nothing by default)' }));
 
-    // effective row
-    api('/api/effective?person=' + encodeURIComponent(p.personId)).then(function (row) {
-      var eff = el('table');
-      Object.keys(row).sort().forEach(function (topic) {
-        eff.appendChild(el('tr', {}, [
-          el('td', { text: topic }),
-          el('td', {}, [gauge(row[topic], false), document.createTextNode(' L' + row[topic])]),
-        ]));
+    // per-topic rows: orange = their explicit exception tuple, steel DRV =
+    // derived through their tiers. Editing a derived value warns first.
+    var directiveBox = el('div');
+    var exceptionRow = state.matrix.personRows.find(function (r) { return r.personId === p.personId; });
+    api('/api/effective?person=' + encodeURIComponent(p.personId)).then(function (effRow) {
+      var box = el('div');
+      box.appendChild(el('h2', { text: 'POLICY \\u2014 EFFECTIVE & EXCEPTIONS' }));
+      Object.keys(effRow).sort().forEach(function (topic) {
+        var cell = (exceptionRow && exceptionRow.cells[topic]) ||
+          { explicit: null, effective: effRow[topic], derivedFrom: null };
+        box.appendChild(policyRow(topic, cell, p.personId, directiveBox, true));
       });
-      drawer.insertBefore(eff, moveBox);
-      drawer.insertBefore(el('h2', { text: 'EFFECTIVE RESOLUTIONS' }), eff);
+      box.appendChild(directiveBox);
+      drawer.insertBefore(box, moveBox);
     });
 
     var moveBox = el('div');
@@ -917,7 +871,7 @@ tr.sep td { border: none; padding: 12px 0 3px; background: var(--bone); color: v
       var q = '/api/move-preview?person=' + encodeURIComponent(p.personId) + '&to=' + encodeURIComponent(sel.value) +
         (from ? '&from=' + encodeURIComponent(from) : '');
       api(q).then(function (diff) {
-        var card = el('div', { class: 'diff cut' });
+        var card = el('div', { class: 'diff cut', 'data-directive': 'AUTHORIZATION // TIER MOVE' });
         // the directive: exactly the tuples that will hit the ledger on SIGN
         if (from) card.appendChild(el('div', { class: 'muted', text: 'REVOKE tier:' + from + ' member ' + p.personId }));
         card.appendChild(el('div', { class: 'muted', text: 'GRANT  tier:' + sel.value + ' member ' + p.personId + ' = 4' }));

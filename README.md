@@ -357,12 +357,13 @@ npx tsx bin/aperture-ui.ts --db ~/.aperture/aperture.db
 # → aperture ui listening on http://127.0.0.1:4870/#t=<session-token>
 ```
 
-Three views: **Matrix** (tier × topic policy grid — solid cells are explicit
-tuples you can click-cycle, hollow cells are evaluator-derived and ask before
-becoming an exception), **Disclosures** (what a given person has actually
-learned, folded from the ledger — read-only by nature), and **Circles**
-(concentric tier rings; every membership move shows its per-topic resolution
-diff before you sign it).
+Three views: **Circles** (concentric tier rings, and the policy console —
+click a ring to edit that tier's per-topic grants on segmented gauges, click
+a person for their exceptions and moves; every change is staged as an
+authorization card listing the exact tuples before you sign), **Knowledge**
+(every memory atom with its full ladder, topic tree, and a who-sees-which-layer
+table), and **Disclosures** (what a given person has actually learned, folded
+from the ledger — read-only by nature).
 
 Security: the server binds to `127.0.0.1` only (no `--host` flag exists; use
 ssh port forwarding for remote access), every API call requires the random
