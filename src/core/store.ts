@@ -45,17 +45,27 @@ export class AtomStore {
     this.migrateQuarantinedColumn();
   }
 
-  /** Pre-scope databases had a `quarantined` boolean; map it onto scopes once. */
+  /**
+   * Pre-scope databases had a `quarantined` boolean; map it onto scopes once
+   * and drop the legacy column — its NOT NULL constraint would otherwise
+   * reject every post-scope insert (which no longer writes it). Keyed off
+   * `quarantined` (not `scope`) so half-migrated databases finish the job.
+   */
   private migrateQuarantinedColumn(): void {
     const cols = this.db.prepare('PRAGMA table_info(atoms)').all() as Array<{ name: string }>;
     const names = new Set(cols.map((c) => c.name));
-    if (names.has('scope')) return;
-    this.db.exec(`
-      ALTER TABLE atoms ADD COLUMN acq_audience TEXT NOT NULL DEFAULT '[]';
-      ALTER TABLE atoms ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';
-      UPDATE atoms SET scope = CASE WHEN quarantined = 1 THEN 'local' ELSE 'global' END,
-                       acq_audience = json_array(source_who);
-    `);
+    if (!names.has('quarantined')) return;
+    this.db.transaction(() => {
+      if (!names.has('scope')) {
+        this.db.exec(`
+          ALTER TABLE atoms ADD COLUMN acq_audience TEXT NOT NULL DEFAULT '[]';
+          ALTER TABLE atoms ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';
+          UPDATE atoms SET scope = CASE WHEN quarantined = 1 THEN 'local' ELSE 'global' END,
+                           acq_audience = json_array(source_who);
+        `);
+      }
+      this.db.exec('ALTER TABLE atoms DROP COLUMN quarantined');
+    })();
   }
 
   insert(atom: MemoryAtom): void {
