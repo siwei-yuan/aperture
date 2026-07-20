@@ -47,6 +47,10 @@
       "debounceMs": {
         "type": "number"
       },
+      "distillation": {
+        "type": "string",
+        "enum": ["host", "endpoint"]
+      },
       "llm": {
         "type": "object",
         "additionalProperties": false,

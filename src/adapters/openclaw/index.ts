@@ -25,6 +25,7 @@ import { retrieveForSession } from '../../core/retrieve.js';
 import { AtomStore } from '../../core/store.js';
 import { capture } from '../../gen/capture.js';
 import { CaptureBuffer, DEFAULT_DEBOUNCE } from '../../gen/debounce.js';
+import { hostLlmClient, type HostLlmComplete } from '../../gen/host-llm.js';
 import { LlmLayerGenerator, type LlmClient } from '../../gen/llm-generator.js';
 import { linkIdentity, resolveIdentity, sessionFor } from '../../session/router.js';
 
@@ -395,6 +396,7 @@ const CONFIG_SCHEMA = {
     topicTaxonomy: { type: 'array', items: { type: 'string' } },
     sensitiveTopics: { type: 'array', items: { type: 'string' } },
     debounceMs: { type: 'number' },
+    distillation: { type: 'string', enum: ['host', 'endpoint'] },
     llm: ENDPOINT_SCHEMA,
     embed: ENDPOINT_SCHEMA,
   },
@@ -415,6 +417,8 @@ export default definePluginEntry({
       topicTaxonomy?: string[];
       sensitiveTopics?: string[];
       debounceMs?: number;
+      /** "host" (default): distill on the chat agent's own model; "endpoint": force cfg.llm. */
+      distillation?: 'host' | 'endpoint';
       llm?: EndpointConfig;
       embed?: EndpointConfig;
     };
@@ -438,11 +442,28 @@ export default definePluginEntry({
           }
         : undefined;
 
+    // Distillation is "out-of-membrane inference procurement" — by default it
+    // reuses the host chat agent's own configured model and credentials via
+    // runtime.llm.complete (trusted-plugin surface, may be absent → fall back
+    // to the cfg.llm endpoint, which itself degrades to a skip generator).
+    // agentId is deliberately not passed: distillation runs in a detached,
+    // debounced capture after agent_end where no per-turn hook ctx (and thus
+    // no stable agentId) is in scope — one generator serves every session —
+    // so the DEFAULT agent's model handles all distillation.
+    const hostLlm = (api as { runtime?: { llm?: { complete?: HostLlmComplete } } }).runtime?.llm;
+    const generator =
+      cfg.distillation !== 'endpoint' && typeof hostLlm?.complete === 'function'
+        ? new LlmLayerGenerator(
+            hostLlmClient((params) => hostLlm.complete!(params)),
+            cfg.topicTaxonomy,
+          )
+        : makeGenerator(cfg.llm, cfg.topicTaxonomy);
+
     registerAperture(api, {
       db: openDatabase(cfg.dbPath),
       ownerId: cfg.ownerId,
       ownerExternalIds: cfg.ownerExternalIds,
-      generator: makeGenerator(cfg.llm, cfg.topicTaxonomy),
+      generator,
       embedder: makeEmbedder(cfg.embed),
       topics: cfg.topics,
       topicTaxonomy: cfg.topicTaxonomy,
